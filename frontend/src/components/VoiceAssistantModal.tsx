@@ -15,7 +15,7 @@ import {
   Send,
   Loader2,
   Trash2,
-  RotateCcw,
+  MessageSquare,
 } from 'lucide-react';
 
 interface VoiceAssistantModalProps {
@@ -33,6 +33,7 @@ interface Message {
   speechText?: string;
   timestamp: string;
   language?: string;
+  isVoice?: boolean;
 }
 
 type Lang = 'en' | 'ne' | 'hi';
@@ -47,28 +48,37 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
 }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [query, setQuery] = useState('');
+  const [interimTranscript, setInterimTranscript] = useState('');
   const [assistantState, setAssistantState] = useState<AssistantState>('idle');
   const [isMuted, setIsMuted] = useState(false);
   const [language, setLanguage] = useState<Lang>('en');
   const [micAmplitude, setMicAmplitude] = useState(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [speechBars, setSpeechBars] = useState<number[]>([15, 25, 15, 35, 15, 25, 20, 15]);
-  
+
   // Track specific playing message
   const [activePlayingId, setActivePlayingId] = useState<string | null>(null);
   const [isPaused, setIsPaused] = useState<boolean>(false);
-  
-  // Session greeting flag
+
+  // Session flags & refs
   const hasGreetedRef = useRef<boolean>(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const animRef = useRef<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const messagesRef = useRef<Message[]>([]);
+  messagesRef.current = messages;
 
   const userName = user?.full_name || 'Bibek';
 
-  // Helper to add chat message
+  // Helper to append message to state and ref
   const addMessage = useCallback(
-    (role: 'user' | 'shachina', text: string, speechText?: string, lang?: string): Message => {
+    (
+      role: 'user' | 'shachina',
+      text: string,
+      speechText?: string,
+      lang?: string,
+      isVoice: boolean = false
+    ): Message => {
       const msg: Message = {
         id: `${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
         role,
@@ -76,6 +86,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         speechText,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         language: lang,
+        isVoice,
       };
       setMessages((prev) => [...prev, msg]);
       return msg;
@@ -112,7 +123,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
           };
         } else {
           return {
-            text: `शुभ सन्ध्या, ${name}। म Shachina हुँ — तपाईंको personal AI assistant। आज म तपाईंलाई कसरी सहयोग गर्न सक्छु?`,
+            text: `शुभ सन्ध्या, ${name}। म Shachina हुँ — तपाईंको personal AI assistant। आज म तपाईंलाई बजार विश्लेषण र ट्रेडिङमा कसरी सहयोग गर्न सक्छु?`,
             speech: `शुभ सन्ध्या, ${name}। म Shachina हुँ, तपाईंको personal assistant। आज म तपाईंलाई कसरी सहयोग गर्न सक्छु?`,
           };
         }
@@ -168,7 +179,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         if (assistantState === 'listening' && micAmplitude > 0) {
           setSpeechBars(
             Array.from({ length: 8 }, (_, i) =>
-              Math.max(10, Math.min(100, micAmplitude + Math.sin(Date.now() / 150 + i) * 30))
+              Math.max(10, Math.min(100, micAmplitude + Math.sin(Date.now() / 140 + i) * 30))
             )
           );
         } else if (assistantState === 'speaking') {
@@ -191,7 +202,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages, assistantState]);
+  }, [messages, interimTranscript, assistantState]);
 
   // Initial welcome greeting on open
   useEffect(() => {
@@ -227,12 +238,12 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
               setIsPaused(false);
             }
           );
-        }, 500);
+        }, 400);
       }
     }
   }, [isOpen, userName, language, isMuted, addMessage, getTimeAwareGreeting]);
 
-  // Speak specific text for a message
+  // Play audio for specific message
   const playSpeech = (msg: Message) => {
     if (isMuted) return;
 
@@ -287,27 +298,51 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     }
   };
 
-  // Send message to AI backend
-  const handleSendMessage = async (customQuery?: string) => {
-    const text = (customQuery || query).trim();
+  // Core Send / Multi-Turn Conversation Handler
+  const handleSendMessage = async (textToSend: string, isVoiceQuery: boolean = false) => {
+    const text = textToSend.trim();
     if (!text || assistantState === 'thinking') return;
 
+    // Immediately stop speech and listening
     stopSpeech();
     voiceEngine.stopListening();
     setQuery('');
+    setInterimTranscript('');
     setErrorMessage(null);
 
-    // Add user message
-    addMessage('user', text, undefined, language);
+    // 1. Immediately post USER chat bubble
+    addMessage('user', text, undefined, language, isVoiceQuery);
+
+    // 2. Transition to Thinking state
     setAssistantState('thinking');
 
     try {
-      const result = await api.askAssistant(text, selectedSymbol, selectedMarket, language);
-      const assistantMsg = addMessage('shachina', result.response, result.speech_text, result.language);
-      
+      // Build conversation history for continuous context
+      const historyPayload = messagesRef.current.slice(-8).map((m) => ({
+        role: m.role === 'user' ? 'user' : 'assistant',
+        content: m.text,
+      }));
+
+      // 3. Process with AI Backend
+      const result = await api.askAssistant(
+        text,
+        selectedSymbol,
+        selectedMarket,
+        language,
+        historyPayload
+      );
+
+      // 4. Post ASSISTANT chat bubble
+      const assistantMsg = addMessage(
+        'shachina',
+        result.response,
+        result.speech_text,
+        result.language || language
+      );
+
       setAssistantState('idle');
 
-      // Speak response aloud if unmuted
+      // 5. Automatically speak response aloud via Text-to-Speech
       if (!isMuted && result.speech_text) {
         setActivePlayingId(assistantMsg.id);
         setAssistantState('speaking');
@@ -338,23 +373,30 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     }
   };
 
-  // Toggle Microphone Input (Speech to Text)
+  // Toggle Microphone Input with Real-Time Two-Way Interaction
   const handleToggleMic = async () => {
+    // If Shachina is speaking or user is listening, interrupt and restart listening
+    if (assistantState === 'speaking') {
+      stopSpeech();
+    }
+
     if (assistantState === 'listening') {
       voiceEngine.stopListening();
       setAssistantState('idle');
       setMicAmplitude(0);
+      setInterimTranscript('');
       return;
     }
 
     stopSpeech();
     setErrorMessage(null);
+    setInterimTranscript('');
 
     const granted = await voiceEngine.startMicrophoneWithVisualizer((lvl) => setMicAmplitude(lvl));
     if (!granted) {
       setAssistantState('error');
-      setErrorMessage('Microphone access is required for voice input. Please allow microphone permission.');
-      setTimeout(() => setAssistantState('idle'), 4000);
+      setErrorMessage('Microphone access is required for voice input. Please allow permissions in your browser.');
+      setTimeout(() => setAssistantState('idle'), 4500);
       return;
     }
 
@@ -363,22 +405,26 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     voiceEngine.listen(
       language,
       (interim) => {
-        // Stream interim text directly into input field
-        setQuery(interim);
+        // Show interim recognized speech live in active state
+        setInterimTranscript(interim);
       },
       (finalText) => {
-        // Final transcript set in input and auto-submitted
-        setQuery(finalText);
+        // Final text recognized: automatically send as user voice message!
+        setInterimTranscript('');
         setAssistantState('idle');
         voiceEngine.stopMicrophoneVisualizer();
         setMicAmplitude(0);
-        handleSendMessage(finalText);
+
+        if (finalText.trim()) {
+          handleSendMessage(finalText, true);
+        }
       },
       (err) => {
         setAssistantState('error');
         setErrorMessage(typeof err === 'string' ? err : "Sorry, I couldn't hear you. Please try again.");
         voiceEngine.stopMicrophoneVisualizer();
         setMicAmplitude(0);
+        setInterimTranscript('');
         setTimeout(() => setAssistantState('idle'), 4000);
       },
       () => {
@@ -389,7 +435,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     );
   };
 
-  // Clear Conversation
+  // Clear Conversation History
   const handleClearHistory = () => {
     stopSpeech();
     setMessages([]);
@@ -402,10 +448,11 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
 
   // Quick suggestion chips
   const quickChips = [
-    language === 'ne' ? `आज NEPSE scan गर` : `Scan NEPSE today`,
+    language === 'ne' ? `आजको NEPSE बजार समरी देखाउ` : `Show me today's NEPSE market summary`,
+    language === 'ne' ? `Banking sector को अवस्था कस्तो छ?` : `What about banking stocks?`,
     language === 'ne' ? `${selectedSymbol} analyze गर` : `Analyze ${selectedSymbol}`,
-    language === 'ne' ? `किन setup WAIT मा छ?` : `Why is setup in WAIT?`,
-    language === 'ne' ? `मलाई कति risk अनुमति छ?` : `What is my risk limit?`,
+    language === 'ne' ? `हाम्रो 1% risk नियम के हो?` : `What about the risk?`,
+    language === 'ne' ? `के यो किन्न उपयुक्त छ?` : `Would you buy it?`,
   ];
 
   return (
@@ -429,7 +476,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
               <div className="flex items-center gap-2">
                 <h3 className="font-extrabold text-white text-sm tracking-wide">SHACHINA</h3>
                 <span className="text-[9px] bg-cyan-950 text-cyan-400 border border-cyan-800 px-1.5 py-0.5 rounded font-mono font-bold">
-                  AI ASSISTANT
+                  VOICE AI
                 </span>
                 <span className="text-[9px] bg-blue-950 text-blue-300 border border-blue-800 px-1.5 py-0.5 rounded font-mono font-bold">
                   {selectedSymbol}
@@ -493,7 +540,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         </div>
 
         {/* =========================================================================
-            2. DYNAMIC VOICE & STATUS BANNER (Equalizer)
+            2. TWO-WAY VOICE & STATUS EQUALIZER BANNER
         ========================================================================= */}
         <div className="shrink-0 mx-4 mt-3 bg-[#080d17] border border-[#17263c] rounded-xl px-4 py-2.5 flex items-center justify-between shadow-inner">
           <div className="flex items-center gap-2">
@@ -501,7 +548,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
               {assistantState === 'listening' ? (
                 <span className="text-rose-400 flex items-center gap-1.5 animate-pulse">
                   <span className="w-2 h-2 rounded-full bg-rose-500" />
-                  Listening...
+                  Listening to your voice...
                 </span>
               ) : assistantState === 'thinking' ? (
                 <span className="text-amber-400 flex items-center gap-1.5">
@@ -511,14 +558,14 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
               ) : assistantState === 'speaking' ? (
                 <span className="text-emerald-400 flex items-center gap-1.5">
                   <Volume2 className="w-3.5 h-3.5 animate-bounce" />
-                  Shachina is speaking...
+                  Shachina is speaking... (Tap mic to interrupt)
                 </span>
               ) : assistantState === 'error' ? (
                 <span className="text-rose-400">
                   {errorMessage || "Sorry, I couldn't hear you. Please try again."}
                 </span>
               ) : (
-                <span className="text-slate-400">Tap the microphone or say "Hey Shachina"</span>
+                <span className="text-slate-400">Tap 🎙️ to talk or type below</span>
               )}
             </span>
           </div>
@@ -542,7 +589,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         </div>
 
         {/* =========================================================================
-            3. CHAT MESSAGES AREA (ChatGPT-Style)
+            3. CHAT MESSAGES AREA (ChatGPT-Style Bubbles)
         ========================================================================= */}
         <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-3.5">
           {messages.map((msg) => {
@@ -579,9 +626,14 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
                   )}
 
                   {/* Message Content */}
-                  <p className="whitespace-pre-line font-sans leading-relaxed selection:bg-cyan-500 selection:text-black">
-                    {msg.text}
-                  </p>
+                  <div className="flex items-start gap-1.5">
+                    {msg.role === 'user' && msg.isVoice && (
+                      <span className="text-cyan-400 font-mono text-[10px] shrink-0 mt-0.5">🎤</span>
+                    )}
+                    <p className="whitespace-pre-line font-sans leading-relaxed selection:bg-cyan-500 selection:text-black">
+                      {msg.text}
+                    </p>
+                  </div>
 
                   {/* User Timestamp */}
                   {msg.role === 'user' && (
@@ -644,6 +696,15 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
             );
           })}
 
+          {/* Live Interim Recognized Speech Bubble */}
+          {interimTranscript && (
+            <div className="flex justify-end">
+              <div className="bg-rose-950/50 border border-rose-500/40 rounded-2xl rounded-tr-sm px-4 py-2.5 text-xs text-rose-200 shadow-md flex items-center gap-2 max-w-[85%] animate-pulse">
+                <span>🎤 {interimTranscript}</span>
+              </div>
+            </div>
+          )}
+
           {/* Thinking Indicator Bubble */}
           {assistantState === 'thinking' && (
             <div className="flex justify-start">
@@ -674,7 +735,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
             {quickChips.map((chip) => (
               <button
                 key={chip}
-                onClick={() => handleSendMessage(chip)}
+                onClick={() => handleSendMessage(chip, false)}
                 disabled={assistantState === 'thinking' || assistantState === 'listening'}
                 className="bg-[#101726] hover:bg-[#182338] border border-[#1b2b44] hover:border-cyan-500/50 text-slate-300 hover:text-cyan-300 text-[11px] px-3 py-1.5 rounded-lg font-mono whitespace-nowrap shrink-0 disabled:opacity-40 transition-all shadow-sm active:scale-95"
               >
@@ -700,7 +761,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         )}
 
         {/* =========================================================================
-            6. CHATGPT-LIKE INPUT BAR
+            6. CHATGPT-STYLE INPUT BAR
         ========================================================================= */}
         <div className="shrink-0 flex items-center gap-2 px-4 pb-8 sm:pb-4 pt-2 border-t border-[#18263c] bg-[#070c16] sm:rounded-b-2xl">
           {/* Microphone Voice Button */}
@@ -710,9 +771,17 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
             className={`relative p-3.5 rounded-xl border-2 transition-all shrink-0 shadow-lg disabled:opacity-40 active:scale-95 ${
               assistantState === 'listening'
                 ? 'bg-rose-600 border-rose-400 text-white scale-105 animate-pulse shadow-rose-500/40'
+                : assistantState === 'speaking'
+                ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300 hover:bg-emerald-500/30'
                 : 'bg-cyan-500/15 border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/25 hover:border-cyan-400 hover:scale-105'
             }`}
-            title={assistantState === 'listening' ? 'Stop listening' : 'Speak to Shachina'}
+            title={
+              assistantState === 'listening'
+                ? 'Stop listening'
+                : assistantState === 'speaking'
+                ? 'Interrupt and speak'
+                : 'Speak to Shachina'
+            }
           >
             {assistantState === 'listening' ? (
               <MicOff className="w-5 h-5" />
@@ -738,7 +807,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                handleSendMessage();
+                handleSendMessage(query, false);
               }
             }}
             disabled={assistantState === 'thinking'}
@@ -747,7 +816,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
 
           {/* Send Button */}
           <button
-            onClick={() => handleSendMessage()}
+            onClick={() => handleSendMessage(query, false)}
             disabled={!query.trim() || assistantState === 'thinking'}
             className="p-3.5 bg-gradient-to-r from-cyan-400 to-blue-500 hover:from-cyan-300 hover:to-blue-400 active:scale-95 text-black rounded-xl font-bold transition-all disabled:opacity-30 disabled:cursor-not-allowed shrink-0 shadow-md hover:scale-105"
             title="Send Message"

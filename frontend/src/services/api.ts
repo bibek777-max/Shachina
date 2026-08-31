@@ -186,12 +186,18 @@ export const api = {
     return res.json();
   },
 
-  // AI Voice Assistant
-  async askAssistant(message: string, symbol: string = 'NABIL', market: string = 'NEPSE', language: string = 'ne') {
+  // AI Voice Assistant with Multi-Turn Conversation History
+  async askAssistant(
+    message: string,
+    symbol: string = 'NABIL',
+    market: string = 'NEPSE',
+    language: string = 'en',
+    history: Array<{ role: string; content: string }> = []
+  ) {
     const res = await fetch(`${API_BASE}/assistant/chat`, {
       method: 'POST',
       headers: this.getAuthHeaders(),
-      body: JSON.stringify({ message, symbol, market, language }),
+      body: JSON.stringify({ message, symbol, market, language, history }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: 'Assistant failed' }));
