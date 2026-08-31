@@ -1,6 +1,7 @@
 /**
  * SHACHINA VOICE ENGINE
  * Natural, Calm, Human-like Female Voice Synthesis, Live Microphone Audio Capture & Web Audio Waveform.
+ * Supports Play, Pause, Resume, Stop, and real-time Speech-to-Text streaming.
  */
 
 export class ShachinaVoiceEngine {
@@ -10,6 +11,9 @@ export class ShachinaVoiceEngine {
   private currentUtterance: SpeechSynthesisUtterance | null = null;
   private recognition: any = null;
   public isMuted: boolean = false;
+
+  // Track active speaking state
+  private currentlySpeakingMessageId: string | null = null;
 
   // Web Audio Context for Live Mic Amplitude
   private audioContext: AudioContext | null = null;
@@ -36,7 +40,7 @@ export class ShachinaVoiceEngine {
   /**
    * Selects the highest quality natural human female voice.
    */
-  public selectBestFemaleVoice(preferredLang: string = 'ne'): SpeechSynthesisVoice | null {
+  public selectBestFemaleVoice(preferredLang: string = 'en'): SpeechSynthesisVoice | null {
     if (!this.voices || this.voices.length === 0) return null;
 
     const femaleKeywords = [
@@ -84,7 +88,8 @@ export class ShachinaVoiceEngine {
    */
   public speak(
     text: string,
-    lang: string = 'ne',
+    lang: string = 'en',
+    messageId?: string,
     onStart?: () => void,
     onEnd?: () => void
   ) {
@@ -104,11 +109,11 @@ export class ShachinaVoiceEngine {
     // Clean formatting for natural human speech flow
     const cleanText = text
       .replace(/[*#_`•]/g, ' ')
-      .replace(/NPR/gi, ' रुपैयाँ ')
-      .replace(/NEPSE/gi, 'नेप्से')
-      .replace(/NABIL/gi, 'नबिल')
-      .replace(/SHIVM/gi, 'शिवम')
-      .replace(/UPPER/gi, 'अपर')
+      .replace(/NPR/gi, ' rupees ')
+      .replace(/NEPSE/gi, 'nepse')
+      .replace(/NABIL/gi, 'nabil')
+      .replace(/SHIVM/gi, 'shivam')
+      .replace(/UPPER/gi, 'upper')
       .replace(/\s+/g, ' ')
       .trim();
 
@@ -118,7 +123,8 @@ export class ShachinaVoiceEngine {
     }
 
     const utterance = new SpeechSynthesisUtterance(cleanText);
-    this.currentUtterance = utterance; // Prevent garbage collection mid-speech
+    this.currentUtterance = utterance;
+    this.currentlySpeakingMessageId = messageId || null;
 
     const voice = this.selectBestFemaleVoice(lang);
     if (voice) {
@@ -142,15 +148,29 @@ export class ShachinaVoiceEngine {
 
     utterance.onend = () => {
       this.currentUtterance = null;
+      this.currentlySpeakingMessageId = null;
       if (onEnd) onEnd();
     };
 
     utterance.onerror = () => {
       this.currentUtterance = null;
+      this.currentlySpeakingMessageId = null;
       if (onEnd) onEnd();
     };
 
     this.synth.speak(utterance);
+  }
+
+  public pause() {
+    if (this.synth && this.synth.speaking && !this.synth.paused) {
+      this.synth.pause();
+    }
+  }
+
+  public resume() {
+    if (this.synth && this.synth.paused) {
+      this.synth.resume();
+    }
   }
 
   public stop() {
@@ -158,10 +178,19 @@ export class ShachinaVoiceEngine {
       this.synth.cancel();
     }
     this.currentUtterance = null;
+    this.currentlySpeakingMessageId = null;
   }
 
   public isSpeaking(): boolean {
-    return this.synth ? this.synth.speaking : false;
+    return this.synth ? (this.synth.speaking && !this.synth.paused) : false;
+  }
+
+  public isPaused(): boolean {
+    return this.synth ? this.synth.paused : false;
+  }
+
+  public getSpeakingMessageId(): string | null {
+    return this.currentlySpeakingMessageId;
   }
 
   /**
@@ -229,10 +258,10 @@ export class ShachinaVoiceEngine {
   }
 
   /**
-   * Listens to owner/user speech and returns real transcript.
+   * Listens to owner/user speech and streams real-time transcript.
    */
   public listen(
-    lang: string = 'ne',
+    lang: string = 'en',
     onInterim: (text: string) => void,
     onResult: (finalText: string) => void,
     onError: (err: any) => void,
@@ -242,7 +271,7 @@ export class ShachinaVoiceEngine {
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
-      onError('Speech recognition not supported in this browser. Please use Chrome, Edge, or Safari, or type your query.');
+      onError('Voice input is not supported by this browser. You can still type your message.');
       onEnd();
       return;
     }
@@ -278,7 +307,13 @@ export class ShachinaVoiceEngine {
       };
 
       rec.onerror = (event: any) => {
-        onError(event.error || 'Voice recognition error');
+        let message = 'Voice recognition error. Please try again.';
+        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+          message = 'Microphone access is required for voice input. Please allow permissions.';
+        } else if (event.error === 'no-speech') {
+          message = "Sorry, I couldn't hear you. Please try again.";
+        }
+        onError(message);
       };
 
       rec.onend = () => {
@@ -288,7 +323,7 @@ export class ShachinaVoiceEngine {
       rec.start();
       this.recognition = rec;
     } catch (e) {
-      onError(e);
+      onError('Unable to start microphone. Please check browser permissions.');
       onEnd();
     }
   }

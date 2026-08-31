@@ -235,6 +235,8 @@ export const App: React.FC = () => {
         isOpen={isVoiceOpen}
         onClose={() => setIsVoiceOpen(false)}
         selectedSymbol={selectedSymbol}
+        selectedMarket={activeMarket}
+        user={user}
       />
 
       {/* User Profile & Settings Modal */}

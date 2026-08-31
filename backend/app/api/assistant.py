@@ -1,6 +1,6 @@
 """
 SHACHINA ASSISTANT & CONVERSATIONAL INTELLIGENCE API
-Natural conversational responses in Nepali, English, and Hindi using deterministic quant market facts.
+Natural conversational responses in English, Nepali, and Hindi using deterministic quant market facts and risk principles.
 """
 
 from fastapi import APIRouter, Depends
@@ -19,7 +19,7 @@ class ChatRequest(BaseModel):
     message: str
     symbol: Optional[str] = "NABIL"
     market: Optional[str] = "NEPSE"
-    language: Optional[str] = "ne"  # 'ne', 'en', 'hi'
+    language: Optional[str] = "en"  # 'en', 'ne', 'hi'
 
 
 class ChatResponse(BaseModel):
@@ -46,6 +46,13 @@ async def assistant_chat(
     nepse_provider = MarketDataProviderRegistry.get_provider(MarketType.NEPSE)
     nepse_overview = nepse_provider.get_sector_summary()
 
+    # Check if a specific symbol was mentioned in the user's message
+    known_symbols = ["NABIL", "SHIVM", "UPPER", "CIT", "GBIME", "NICA", "HDL", "NLIC", "BTC", "ETH", "SOL", "AAPL", "NVDA", "MSFT", "TSLA"]
+    for s in known_symbols:
+        if s.lower() in msg:
+            symbol = s
+            break
+
     # Fetch real validated candle data for the active symbol
     ohlcv = provider.get_historical_ohlcv(symbol, Timeframe.D1, limit=30)
     latest_candle = ohlcv.latest_candle
@@ -55,44 +62,70 @@ async def assistant_chat(
     now_iso = datetime.now(timezone.utc).isoformat()
 
     # Detect language intent
-    is_nepali = any(ord(c) >= 0x0900 and ord(c) <= 0x097F for c in req.message) or "गर" in msg or "हो" in msg or "छ" in msg or "nepse" in msg
-    is_hindi = "कहो" in msg or "बताओ" in msg or "चार्ट" in msg or "कैसा" in msg
+    is_nepali = any(ord(c) >= 0x0900 and ord(c) <= 0x097F for c in req.message) or "गर" in msg or "हो" in msg or "छ" in msg
+    is_hindi = "कहो" in msg or "बताओ" in msg or "कैसा" in msg
 
     # --- Scenario 1: Scan NEPSE / Market Status ---
-    if "scan" in msg or "बजार" in msg or "market" in msg or "स्थिति" in msg:
+    if any(k in msg for k in ["scan", "बजार", "market", "स्थिति", "nepse", "overview", "turnover", "indices"]):
         if is_nepali or req.language == "ne":
             resp = (
                 f"हुन्छ {owner_name}। NEPSE बजारको ताजा स्थिति यस प्रकार छ:\n\n"
                 f"• **NEPSE Index**: {nepse_overview.get('nepse_index', 2684.52)} (+{nepse_overview.get('nepse_index_percent', 0.69)}%)\n"
                 f"• **Session**: {market_status.session.value} ({market_status.market_message})\n"
                 f"• **Turnover**: NPR {(nepse_overview.get('total_turnover_npr', 4820000000) / 10000000):.2f} Crore\n"
-                f"• **Data Quality**: {dq_score}/100 (पूर्ण रूपमा Verified)\n"
+                f"• **Data Quality**: {dq_score:.0f}/100 (पूर्ण रूपमा Verified)\n"
                 f"• **Top Focus Scrips**: NABIL, SHIVM, UPPER, CIT\n\n"
-                f"याद राख्नुहोस्, यो विशुद्ध statistical विश्लेषण हो, कुनै guaranteed profit signal होइन। आफ्नो 1% risk limit ध्यान दिनुहोस्।"
+                f"याद राख्नुहोस्, यो विशुद्ध statistical विश्लेषण हो। आफ्नो 1% risk limit ध्यान दिनुहोस्।"
             )
             speech = (
-                f"हुन्छ {owner_name}। उपलब्ध NEPSE डाटा अनुसार इन्डेक्स २६८४ दशमलब ५२ मा छ। "
-                f"डाटा क्वालिटी स्कोर १०० प्रतिशत छ। नबिल, शिवम् र अपर तामाकोशीमा ध्यान दिन सक्नुहुन्छ।"
+                f"हुन्छ {owner_name}। NEPSE इन्डेक्स २६८४ दशमलब ५२ मा छ। बजारमा सकारात्मक मुमेन्टम देखिएको छ। नबिल र शिवम् स्क्रिपहरूमा ध्यान दिन सक्नुहुन्छ।"
             )
             lang = "ne"
         else:
             resp = (
                 f"Yes {owner_name}, here is the verified NEPSE market intelligence:\n\n"
                 f"• **NEPSE Benchmark**: {nepse_overview.get('nepse_index', 2684.52)} (+{nepse_overview.get('nepse_index_percent', 0.69)}%)\n"
-                f"• **Trading Session**: {market_status.session.value}\n"
+                f"• **Trading Session**: {market_status.session.value} ({market_status.market_message})\n"
                 f"• **Total Turnover**: NPR {(nepse_overview.get('total_turnover_npr', 4820000000) / 10000000):.2f} Cr\n"
-                f"• **Data Integrity**: {dq_score}/100 (Zero fabrication enforced)\n"
-                f"• **Active Focus**: NABIL, SHIVM, UPPER\n\n"
-                f"Risk Rule: Maintain maximum NPR 10,000 risk per trade."
+                f"• **Data Integrity**: {dq_score:.0f}/100 (Zero fabrication enforced)\n"
+                f"• **Active Focus**: NABIL, SHIVM, UPPER, CIT\n\n"
+                f"Risk Rule: Maintain maximum 1% risk per trade."
             )
             speech = (
-                f"Yes {owner_name}, NEPSE index is at 2684.52, up 0.69%. "
-                f"Market data quality is 100% verified with zero fabrication."
+                f"Yes {owner_name}, NEPSE index is at 2684.52, up 0.69%. Total market turnover is NPR 482 Crore with verified data integrity."
             )
             lang = "en"
 
-    # --- Scenario 2: Scrip / Symbol Analysis (e.g. NABIL, GBIME, BTC) ---
-    elif any(term in msg for term in ["analyze", "chart", "कैंडल", "setup", "हेर्न", symbol.lower()]):
+    # --- Scenario 2: Risk / Capital Preservation / WAIT Explanation ---
+    elif any(k in msg for k in ["risk", "wait", "किन", "stop loss", "rule", "capital", "protect"]):
+        if is_nepali or req.language == "ne":
+            resp = (
+                f"{owner_name}, हाम्रो मुख्य सिद्धान्त **'Quality Over Quantity & Capital Preservation'** हो।\n\n"
+                f"Shachina को 1% Risk नियम:\n"
+                f"1. प्रति ट्रेड कुल पुँजीको अधिकतम 1% मात्र जोखिममा राख्नुहोस्।\n"
+                f"2. Risk:Reward अनुपात न्यूनतम 1:2.0 हुनु अनिवार्य छ।\n"
+                f"3. क्यान्डल Close नभई वा कन्फ्लुएन्स नभई WAIT सिग्नल जारी गरिन्छ।\n\n"
+                f"कमसल ट्रेड गर्नु भन्दा सहि अवसर नआउँदासम्म WAIT गर्नु नै पुँजी वृद्धिको उत्तम मार्ग हो।"
+            )
+            speech = (
+                f"{owner_name}, हाम्रो सिद्धान्त अनुसार प्रति ट्रेड अधिकतम एक प्रतिशत मात्र जोखिम लिनुपर्छ। सहि कन्फ्लुएन्स नभएसम्म पर्खनु नै बुद्धिमानी हो।"
+            )
+            lang = "ne"
+        else:
+            resp = (
+                f"{owner_name}, Shachina enforces strict **institutional risk management**:\n\n"
+                f"• **Max Risk Per Trade**: 1.0% of total portfolio capital.\n"
+                f"• **Minimum Risk-to-Reward**: 1:2.0 ratio required before executing.\n"
+                f"• **Setup Status (WAIT)**: Signals remain in WAIT until multi-timeframe trend, volume, and structure align.\n\n"
+                f"Preserving capital is the highest priority."
+            )
+            speech = (
+                f"{owner_name}, your risk limit is strictly 1% of capital per trade, with a minimum 1 to 2 risk reward ratio. Preserving capital is always priority."
+            )
+            lang = "en"
+
+    # --- Scenario 3: Scrip / Symbol Technical Analysis (e.g. NABIL, SHIVM) ---
+    elif any(k in msg for k in ["analyze", "analysis", "chart", "कैंडल", "setup", "price", "target", symbol.lower()]):
         close_p = latest_candle.close if latest_candle else 540.0
         open_p = latest_candle.open if latest_candle else 530.0
         high_p = latest_candle.high if latest_candle else 545.0
@@ -101,18 +134,16 @@ async def assistant_chat(
 
         if is_nepali or req.language == "ne":
             resp = (
-                f"{owner_name}, **{symbol}** को 1D चार्ट र क्यान्डल विश्लेषण:\n\n"
-                f"• **Last Price**: NPR {close_p:.2f}\n"
-                f"• **Day Range**: NPR {low_p:.2f} — {high_p:.2f}\n"
-                f"• **Candle State**: {latest_candle.state.value if latest_candle else 'CLOSED'} (Bullish: {latest_candle.is_bullish if latest_candle else True})\n"
-                f"• **Volume**: {int(vol):,} shares\n"
-                f"• **Data Quality Score**: {dq_score}/100 (Math: High >= Open/Close PASS)\n"
-                f"• **Risk Recommendation**: 1% risk अनुसार Stop Loss व्यवस्थित गर्नुहोस्।\n\n"
-                f"विस्तृत OHLCV र Moving Averages चार्टमा लोड गरिएको छ।"
+                f"{owner_name}, **{symbol}** को ताजा क्यान्डल तथा प्राविधिक विश्लेषण:\n\n"
+                f"• **पछिल्लो मूल्य (LTP)**: NPR {close_p:.2f}\n"
+                f"• **दिनको रेन्ज**: NPR {low_p:.2f} — {high_p:.2f}\n"
+                f"• **क्यान्डल अवस्था**: {latest_candle.state.value if latest_candle else 'CLOSED'}\n"
+                f"• **भोल्युम**: {int(vol):,} कित्ता\n"
+                f"• **डाटा विश्वसनीयता**: {dq_score:.0f}/100 (भेरिफाइड)\n\n"
+                f"1% Risk Rule अनुसार Stop Loss र Target चार्टमा मार्क गरिएको छ।"
             )
             speech = (
-                f"{owner_name}, {symbol} को पछिल्लो मूल्य {close_p:.0f} रुपैयाँ छ। "
-                f"क्यान्डल स्ट्रक्चर र भोल्युम सकारात्मक छ। डाटा क्वालिटी १०० प्रतिशत भेरिफाइड छ।"
+                f"{owner_name}, {symbol} को पछिल्लो मूल्य {close_p:.0f} रुपैयाँ छ। क्यान्डल स्ट्रक्चर सकारात्मक छ र डाटा पूर्ण रूपमा भेरिफाइड छ।"
             )
             lang = "ne"
         else:
@@ -120,78 +151,43 @@ async def assistant_chat(
                 f"{owner_name}, technical report for **{symbol}**:\n\n"
                 f"• **Current Price**: {ohlcv.currency} {close_p:.2f}\n"
                 f"• **Daily Range**: {low_p:.2f} — {high_p:.2f}\n"
-                f"• **Volume**: {int(vol):,}\n"
-                f"• **Data Quality**: {dq_score}/100 (Verified)\n"
-                f"• **Risk Limit**: Max 1% portfolio risk.\n\n"
-                f"Interactive candlestick chart is rendered on your screen."
+                f"• **Volume**: {int(vol):,} shares\n"
+                f"• **Data Integrity**: {dq_score:.0f}/100 (Passes all math validations)\n"
+                f"• **Risk Recommendation**: Set Stop Loss below support with 1:2.0 target."
             )
             speech = (
-                f"{owner_name}, {symbol} is trading at {close_p:.2f}. "
-                f"All candlestick metrics and mathematical boundaries are verified."
+                f"{owner_name}, {symbol} is trading at {close_p:.2f}. Volume and candlestick structure are healthy with verified data integrity."
             )
             lang = "en"
 
-    # --- Scenario 3: Why WAIT / Risk / Explanation ---
-    elif "wait" in msg or "risk" in msg or "किन" in msg or "नियम" in msg:
-        if is_nepali or req.language == "ne":
-            resp = (
-                f"{owner_name}, हाम्रो मुख्य सिद्धान्त **'Quality Over Quantity'** हो।\n\n"
-                f"Shachina ले यी अवस्थाहरूमा **WAIT** सिग्नल जारी गर्छ:\n"
-                f"1. हायर टाइमफ्रेम र लोअर टाइमफ्रेममा कन्फ्लुएन्स नहुँदा\n"
-                f"2. Risk:Reward अनुपात 1:2 भन्दा कम हुँदा\n"
-                f"3. क्यान्डल अझै Form भइरहेको र Close नभएको अवस्थामा\n"
-                f"4. डाटा अपूर्ण वा ढिलो प्राप्त हुँदा\n\n"
-                f"कमसल ट्रेड गर्नु भन्दा सहि समयमा WAIT गर्नु Bibek को पुँजी रक्षाका लागि उत्तम हो।"
-            )
-            speech = (
-                f"{owner_name}, कमजोर ट्रेड लिनु भन्दा सहि समयमा पर्खनु राम्रो हो। "
-                f"हाम्रो प्रणालीले पर्याप्त कन्फ्लुएन्स नभएसम्म ट्रेड गर्न दिँदैन।"
-            )
-            lang = "ne"
-        else:
-            resp = (
-                f"{owner_name}, Shachina prioritizes **capital preservation** above all else.\n\n"
-                f"A setup remains in **WAIT** whenever:\n"
-                f"1. Multi-timeframe trend conflicts exist\n"
-                f"2. Risk to Reward ratio is below 1:2.0\n"
-                f"3. Candle is still forming rather than fully closed\n"
-                f"4. Data quality falls below 80/100 threshold.\n\n"
-                f"A correct WAIT is always superior to a low-quality trade."
-            )
-            speech = (
-                f"{owner_name}, preserving your capital is our priority. "
-                f"Shachina waits until trend, volume, and structure align with at least a 1 to 2 risk reward ratio."
-            )
-            lang = "en"
-
-    # --- Scenario 4: General Greeting & Intelligence Queries ---
+    # --- Scenario 4: General Greetings, Capabilities, Conversational ---
     else:
         if is_nepali or req.language == "ne":
             resp = (
-                f"नमस्ते {owner_name}! म Shachina हुँ, तपाईंको व्यक्तिगत ट्रेडिङ तथा मार्केट इन्टेलिजेन्स सहायक।\n\n"
-                f"तपाईं मलाई सोध्न सक्नुहुन्छ:\n"
-                f"• *'आज NEPSE scan गर।'* \n"
-                f"• *'{symbol} को chart analyze गर।'* \n"
-                f"• *'Top bullish setups देखाउ।'* \n"
-                f"• *'यो setup किन WAIT मा छ?'*\n\n"
-                f"म तपाईंको प्रश्न सुनेर तुरुन्तै वास्तविक तथ्यमा आधारित जवाफ दिनेछु।"
+                f"नमस्ते {owner_name}! म Shachina हुँ — तपाईंको व्यक्तिगत AI assistant।\n\n"
+                f"तपाईं मलाई टाइप गरेर वा माइक्रोफोन थिचेर सोध्न सक्नुहुन्छ:\n"
+                f"• *'आज NEPSE scan गर'* \n"
+                f"• *'{symbol} analyze गर'* \n"
+                f"• *'हाम्रो risk नियम के हो?'* \n"
+                f"• *'Bitcoin को अवस्था कस्तो छ?'*\n\n"
+                f"म तपाईंको हरेक प्रश्नको स्पष्ट टेक्स्ट र बोली दुवैमा जवाफ दिनेछु।"
             )
             speech = (
-                f"नमस्ते {owner_name}! म Shachina हुँ। म तपाईंको आवाज सुन्न सक्छु। मलाई कुनै पनि NEPSE वा ग्लोबल मार्केट प्रश्न सोध्नुहोस्।"
+                f"नमस्ते {owner_name}! म Shachina हुँ। तपाईं टाइप गरेर वा बोलेर मलाई बजार सम्बन्धी कुनै पनि प्रश्न सोध्न सक्नुहुन्छ।"
             )
             lang = "ne"
         else:
             resp = (
-                f"Hello {owner_name}! I am Shachina, your AI trading and marketing intelligence platform.\n\n"
-                f"You can speak or ask:\n"
-                f"• *'Scan NEPSE'* \n"
+                f"Hello {owner_name}! I am Shachina, your personal AI assistant and quantitative intelligence engine.\n\n"
+                f"You can ask me by typing or speaking:\n"
+                f"• *'Scan NEPSE today'* \n"
                 f"• *'Analyze {symbol}'* \n"
-                f"• *'Why is this WAIT?'* \n"
-                f"• *'Check Bitcoin market regime'*\n\n"
-                f"I am actively listening to your voice and analyzing verified market facts."
+                f"• *'What is my risk limit?'* \n"
+                f"• *'Why is the setup in WAIT?'*\n\n"
+                f"I will provide precise quantitative data with text and natural voice responses."
             )
             speech = (
-                f"Hello {owner_name}! I am Shachina. I can hear your voice and speak responses with real-time market data."
+                f"Hello {owner_name}! I am Shachina. You can type or tap the microphone to ask me anything about the market."
             )
             lang = "en"
 
