@@ -7,6 +7,7 @@ export class ShachinaVoiceEngine {
   private synth: SpeechSynthesis | null = null;
   private voices: SpeechSynthesisVoice[] = [];
   private selectedVoice: SpeechSynthesisVoice | null = null;
+  private currentUtterance: SpeechSynthesisUtterance | null = null;
   private recognition: any = null;
   public isMuted: boolean = false;
 
@@ -92,6 +93,11 @@ export class ShachinaVoiceEngine {
       return;
     }
 
+    // Resume synth if paused/suspended by browser
+    if (this.synth.paused) {
+      this.synth.resume();
+    }
+
     // Stop previous utterance
     this.synth.cancel();
 
@@ -112,15 +118,16 @@ export class ShachinaVoiceEngine {
     }
 
     const utterance = new SpeechSynthesisUtterance(cleanText);
+    this.currentUtterance = utterance; // Prevent garbage collection mid-speech
+
     const voice = this.selectBestFemaleVoice(lang);
     if (voice) {
       utterance.voice = voice;
     }
 
     // Human female acoustic calibration:
-    // Pitch slightly higher for clear feminine warmth (1.16), steady calm cadence (0.95)
-    utterance.pitch = 1.16;
-    utterance.rate = 0.95;
+    utterance.pitch = 1.12;
+    utterance.rate = 0.98;
     utterance.volume = 1.0;
 
     if (lang === 'ne' || lang === 'hi') {
@@ -134,10 +141,12 @@ export class ShachinaVoiceEngine {
     };
 
     utterance.onend = () => {
+      this.currentUtterance = null;
       if (onEnd) onEnd();
     };
 
     utterance.onerror = () => {
+      this.currentUtterance = null;
       if (onEnd) onEnd();
     };
 
@@ -148,6 +157,7 @@ export class ShachinaVoiceEngine {
     if (this.synth) {
       this.synth.cancel();
     }
+    this.currentUtterance = null;
   }
 
   public isSpeaking(): boolean {
@@ -167,6 +177,9 @@ export class ShachinaVoiceEngine {
         const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
         if (AudioCtx) {
           this.audioContext = new AudioCtx();
+          if (this.audioContext.state === 'suspended') {
+            await this.audioContext.resume();
+          }
           const source = this.audioContext.createMediaStreamSource(this.micStream);
           this.analyserNode = this.audioContext.createAnalyser();
           this.analyserNode.fftSize = 64;
@@ -219,6 +232,7 @@ export class ShachinaVoiceEngine {
    * Listens to owner/user speech and returns real transcript.
    */
   public listen(
+    lang: string = 'ne',
     onInterim: (text: string) => void,
     onResult: (finalText: string) => void,
     onError: (err: any) => void,
@@ -228,7 +242,7 @@ export class ShachinaVoiceEngine {
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
-      onError('Speech recognition not supported in this browser. You can type queries directly.');
+      onError('Speech recognition not supported in this browser. Please use Chrome, Edge, or Safari, or type your query.');
       onEnd();
       return;
     }
@@ -238,7 +252,14 @@ export class ShachinaVoiceEngine {
       const rec = new SpeechRecognition();
       rec.continuous = false;
       rec.interimResults = true;
-      rec.lang = 'ne-NP'; // Multi-lingual recognition
+
+      if (lang === 'ne') {
+        rec.lang = 'ne-NP';
+      } else if (lang === 'hi') {
+        rec.lang = 'hi-IN';
+      } else {
+        rec.lang = 'en-US';
+      }
 
       rec.onresult = (event: any) => {
         let interim = '';
@@ -257,7 +278,7 @@ export class ShachinaVoiceEngine {
       };
 
       rec.onerror = (event: any) => {
-        onError(event.error);
+        onError(event.error || 'Voice recognition error');
       };
 
       rec.onend = () => {

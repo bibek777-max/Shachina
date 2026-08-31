@@ -1,6 +1,7 @@
 """
 SHACHINA DATABASE SETUP
-Async SQLAlchemy Engine and Session Manager.
+Async SQLAlchemy Engine and Session Manager for Production Cloud & Local Environments.
+Supports SQLite (local/embedded) & PostgreSQL (Supabase, Neon, Render, Railway).
 """
 
 from typing import AsyncGenerator
@@ -8,12 +9,22 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy.orm import declarative_base
 from backend.app.core.config import settings
 
-engine = create_async_engine(
-    settings.DATABASE_URL,
-    echo=False,
-    future=True,
-    connect_args={"check_same_thread": False} if "sqlite" in settings.DATABASE_URL else {}
-)
+db_url = settings.database_url
+is_sqlite = "sqlite" in db_url
+
+engine_kwargs = {
+    "echo": False,
+    "future": True,
+}
+
+if is_sqlite:
+    engine_kwargs["connect_args"] = {"check_same_thread": False}
+else:
+    engine_kwargs["pool_pre_ping"] = True
+    engine_kwargs["pool_size"] = 10
+    engine_kwargs["max_overflow"] = 20
+
+engine = create_async_engine(db_url, **engine_kwargs)
 
 AsyncSessionLocal = async_sessionmaker(
     bind=engine,

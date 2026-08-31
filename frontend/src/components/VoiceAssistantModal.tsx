@@ -162,6 +162,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     }
     setIsListening(true);
     voiceEngine.listen(
+      language,
       (interim) => setInterimText(interim),
       (final) => {
         setInterimText(''); setIsListening(false);

@@ -1,0 +1,34 @@
+databases:
+  - name: shachina-db
+    databaseName: shachina
+    user: shachina_user
+    plan: free
+    region: singapore
+
+services:
+  - type: web
+    name: shachina
+    runtime: docker
+    plan: free
+    region: singapore
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: shachina-db
+          property: connectionString
+      - key: ENVIRONMENT
+        value: production
+      - key: PROJECT_TITLE
+        value: "SHACHINA Quantitative Trading Platform"
+      - key: OWNER_NAME
+        value: "Bibek"
+      - key: PRIMARY_MARKET
+        value: "NEPSE"
+      - key: DEFAULT_TIMEZONE
+        value: "Asia/Kathmandu"
+      - key: DEFAULT_CURRENCY
+        value: "NPR"
+      - key: SHACHINA_SECRET_KEY
+        generateValue: true
+      - key: ALLOWED_ORIGINS
+        value: "*"

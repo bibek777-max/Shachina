@@ -1,11 +1,11 @@
 """
 SHACHINA: Ultimate AI Personal Assistant & Global Trading Intelligence Platform
-FastAPI Backend Application Entrypoint.
+FastAPI Backend Application Entrypoint - Production Grade.
 """
 
 import os
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -22,11 +22,14 @@ from shachina_quant.data.factory import MarketDataProviderRegistry
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Initialize DB tables and seed Bibek user
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    
-    async with AsyncSessionLocal() as session:
-        await seed_bibek_user(session)
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        
+        async with AsyncSessionLocal() as session:
+            await seed_bibek_user(session)
+    except Exception as e:
+        print(f"⚠️ [DATABASE INIT WARNING]: {e}")
     
     # Initialize Quant Provider Registry
     MarketDataProviderRegistry.initialize()
@@ -35,7 +38,10 @@ async def lifespan(app: FastAPI):
     yield
     
     # Shutdown
-    await engine.dispose()
+    try:
+        await engine.dispose()
+    except Exception as e:
+        print(f"⚠️ [DATABASE SHUTDOWN WARNING]: {e}")
     print("🛑 [SHACHINA QUANT ENGINE] Shutdown completed.")
 
 
@@ -44,12 +50,24 @@ app = FastAPI(
     version="1.0.0",
     description="Production-grade trading intelligence, quantitative analysis, and AI assistant platform for Bibek.",
     lifespan=lifespan,
+    docs_url="/docs" if settings.ENVIRONMENT != "production" else None,
+    redoc_url=None,
 )
 
-# Enable CORS for Next.js/React frontend
+# Security Headers Middleware
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response: Response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
+
+# CORS Configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -70,6 +88,7 @@ async def health_check():
         "platform": "SHACHINA",
         "owner": settings.OWNER_NAME,
         "engine": "active",
+        "environment": settings.ENVIRONMENT,
         "primary_market": settings.PRIMARY_MARKET,
         "default_timezone": settings.DEFAULT_TIMEZONE,
         "default_currency": settings.DEFAULT_CURRENCY,
@@ -80,11 +99,19 @@ async def health_check():
 # Mount Static Frontend Build if present
 dist_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "frontend", "dist")
 if os.path.exists(dist_path):
-    app.mount("/assets", StaticFiles(directory=os.path.join(dist_path, "assets")), name="assets")
+    assets_path = os.path.join(dist_path, "assets")
+    if os.path.exists(assets_path):
+        app.mount("/assets", StaticFiles(directory=assets_path), name="assets")
 
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
+        # 1. Exact static file inside dist
         file_target = os.path.join(dist_path, full_path)
         if full_path and os.path.exists(file_target) and os.path.isfile(file_target):
             return FileResponse(file_target)
-        return FileResponse(os.path.join(dist_path, "index.html"))
+        
+        # 2. SPA index fallback
+        index_file = os.path.join(dist_path, "index.html")
+        if os.path.exists(index_file):
+            return FileResponse(index_file)
+        return {"error": "Frontend build not found"}
