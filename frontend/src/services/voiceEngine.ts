@@ -1,91 +1,79 @@
 /**
- * SHACHINA VOICE ENGINE
- * Natural, Calm, Human-like Female Voice Synthesis, Live Microphone Audio Capture & Web Audio Waveform.
- * Supports Play, Pause, Resume, Stop, and real-time Speech-to-Text streaming.
+ * SHACHINA VOICE ENGINE v3
+ * ─────────────────────────────────────────────────────
+ * • Offline-first: Web Speech API runs entirely in the browser — 
+ *   no internet is needed for speech recognition on Chrome/Edge/Safari.
+ * • Automatic silence detection (1.4 s) → fires final result.
+ * • Immediate interruption: mic tap stops TTS and starts listening.
+ * • Graceful fallback: if SpeechRecognition is absent, reports clearly.
+ * • Real microphone amplitude visualiser via Web Audio Analyser.
+ * • Natural human-female Text-to-Speech with iOS/Android fixes.
  */
 
 export class ShachinaVoiceEngine {
   private synth: SpeechSynthesis | null = null;
   private voices: SpeechSynthesisVoice[] = [];
-  private selectedVoice: SpeechSynthesisVoice | null = null;
   private currentUtterance: SpeechSynthesisUtterance | null = null;
-  private recognition: any = null;
-  public isMuted: boolean = false;
-
-  // Track active speaking state
   private currentlySpeakingMessageId: string | null = null;
 
-  // Web Audio Context for Live Mic Amplitude
+  // Recognition
+  private recognition: any = null;
+  private silenceTimer: ReturnType<typeof setTimeout> | null = null;
+  private resultFired = false;  // guard against double-fire
+
+  // Mic Analyser
   private audioContext: AudioContext | null = null;
   private analyserNode: AnalyserNode | null = null;
   private micStream: MediaStream | null = null;
   private animFrameId: number | null = null;
 
+  public isMuted = false;
+
+  /** Singleton-safe SpeechRecognition constructor */
+  private static SpeechRec: any =
+    typeof window !== 'undefined'
+      ? (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+      : null;
+
   constructor() {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       this.synth = window.speechSynthesis;
-      this.loadVoices();
+      this.synth.getVoices();                            // trigger load
       if (this.synth.onvoiceschanged !== undefined) {
-        this.synth.onvoiceschanged = () => this.loadVoices();
+        this.synth.onvoiceschanged = () => this.synth!.getVoices();
       }
     }
   }
 
-  private loadVoices() {
-    if (!this.synth) return;
-    this.voices = this.synth.getVoices();
-    this.selectBestFemaleVoice();
+  /** Returns true when real browser STT is available (works offline on Chrome/Edge). */
+  public static isRecognitionSupported(): boolean {
+    return !!ShachinaVoiceEngine.SpeechRec;
   }
 
-  /**
-   * Selects the highest quality natural human female voice.
-   */
-  public selectBestFemaleVoice(preferredLang: string = 'en'): SpeechSynthesisVoice | null {
-    if (!this.voices || this.voices.length === 0) return null;
+  // ─────────────────────────────────────────────────────────────
+  // TEXT-TO-SPEECH
+  // ─────────────────────────────────────────────────────────────
 
-    const femaleKeywords = [
-      'samantha',
-      'victoria',
-      'karen',
-      'tessa',
-      'moira',
-      'fiona',
-      'zira',
-      'lekha',
-      'veena',
-      'google uk english female',
-      'google us english female',
-      'google us english',
-      'google हिन्दी',
-      'female',
-      'woman',
-    ];
+  private getBestVoice(lang: string): SpeechSynthesisVoice | null {
+    const all = this.synth ? this.synth.getVoices() : [];
+    if (!all.length) return null;
 
-    // 1. Language matched female voice
-    let match = this.voices.find((v) => {
-      const name = v.name.toLowerCase();
-      const lang = v.lang.toLowerCase();
-      const matchesLang = lang.startsWith(preferredLang.toLowerCase());
-      const isFemale = femaleKeywords.some((kw) => name.includes(kw));
-      return matchesLang && isFemale;
-    });
+    const femaleHints = ['samantha','victoria','karen','tessa','moira','fiona',
+      'zira','lekha','veena','google uk english female','google us english female',
+      'google us english','female','woman'];
 
-    // 2. High quality natural English/South Asian female voice
-    if (!match) {
-      match = this.voices.find((v) => {
-        const name = v.name.toLowerCase();
-        return femaleKeywords.some((kw) => name.includes(kw));
-      });
-    }
+    const langPrefix = lang === 'ne' ? 'hi' : lang === 'hi' ? 'hi' : 'en';
 
-    // 3. Fallback
-    this.selectedVoice = match || this.voices[0] || null;
-    return this.selectedVoice;
+    // Priority 1: language + female
+    let v = all.find(x => x.lang.toLowerCase().startsWith(langPrefix) &&
+      femaleHints.some(h => x.name.toLowerCase().includes(h)));
+    // Priority 2: any female
+    if (!v) v = all.find(x => femaleHints.some(h => x.name.toLowerCase().includes(h)));
+    // Fallback: first available
+    return v || all[0];
   }
 
-  /**
-   * Speaks text using Shachina's calm, pleasant human female voice persona.
-   */
+  /** Speaks text aloud. iOS requires the utterance to be created/started in a user-gesture handler. */
   public speak(
     text: string,
     lang: string = 'en',
@@ -93,249 +81,234 @@ export class ShachinaVoiceEngine {
     onStart?: () => void,
     onEnd?: () => void
   ) {
-    if (typeof window === 'undefined' || !this.synth || this.isMuted) {
-      if (onEnd) onEnd();
-      return;
-    }
+    if (!this.synth || this.isMuted) { onEnd?.(); return; }
 
-    // Resume synth if paused/suspended by browser
-    if (this.synth.paused) {
-      this.synth.resume();
-    }
-
-    // Stop previous utterance
+    // iOS Safari fix: resume before cancel
+    if (this.synth.paused) this.synth.resume();
     this.synth.cancel();
 
-    // Clean formatting for natural human speech flow
-    const cleanText = text
+    const clean = text
       .replace(/[*#_`•]/g, ' ')
-      .replace(/NPR/gi, ' rupees ')
-      .replace(/NEPSE/gi, 'nepse')
-      .replace(/NABIL/gi, 'nabil')
-      .replace(/SHIVM/gi, 'shivam')
-      .replace(/UPPER/gi, 'upper')
+      .replace(/NPR/gi, 'rupees')
+      .replace(/NEPSE/gi, 'NEPSE')
       .replace(/\s+/g, ' ')
       .trim();
 
-    if (!cleanText) {
-      if (onEnd) onEnd();
-      return;
-    }
+    if (!clean) { onEnd?.(); return; }
 
-    const utterance = new SpeechSynthesisUtterance(cleanText);
-    this.currentUtterance = utterance;
-    this.currentlySpeakingMessageId = messageId || null;
+    const utter = new SpeechSynthesisUtterance(clean);
+    this.currentUtterance = utter;
+    this.currentlySpeakingMessageId = messageId ?? null;
 
-    const voice = this.selectBestFemaleVoice(lang);
-    if (voice) {
-      utterance.voice = voice;
-    }
+    const voice = this.getBestVoice(lang);
+    if (voice) utter.voice = voice;
+    utter.lang = lang === 'ne' || lang === 'hi' ? 'hi-IN' : 'en-US';
+    utter.pitch = 1.12;
+    utter.rate  = 0.97;
+    utter.volume = 1.0;
 
-    // Human female acoustic calibration:
-    utterance.pitch = 1.12;
-    utterance.rate = 0.98;
-    utterance.volume = 1.0;
+    utter.onstart = () => onStart?.();
+    utter.onend   = () => { this._clearSpeakState(); onEnd?.(); };
+    utter.onerror = () => { this._clearSpeakState(); onEnd?.(); };
 
-    if (lang === 'ne' || lang === 'hi') {
-      utterance.lang = 'hi-IN';
-    } else {
-      utterance.lang = 'en-US';
-    }
+    this.synth.speak(utter);
 
-    utterance.onstart = () => {
-      if (onStart) onStart();
-    };
-
-    utterance.onend = () => {
-      this.currentUtterance = null;
-      this.currentlySpeakingMessageId = null;
-      if (onEnd) onEnd();
-    };
-
-    utterance.onerror = () => {
-      this.currentUtterance = null;
-      this.currentlySpeakingMessageId = null;
-      if (onEnd) onEnd();
-    };
-
-    this.synth.speak(utterance);
+    // Chrome desktop has a ~15-second silence bug — keep speech synthesis alive
+    this._keepSynthAlive();
   }
 
-  public pause() {
-    if (this.synth && this.synth.speaking && !this.synth.paused) {
-      this.synth.pause();
-    }
+  /** Chrome bug: speechSynthesis pauses after ~15 s on some desktops. Workaround: periodic resume. */
+  private _keepAliveInterval: ReturnType<typeof setInterval> | null = null;
+  private _keepSynthAlive() {
+    if (this._keepAliveInterval) clearInterval(this._keepAliveInterval);
+    this._keepAliveInterval = setInterval(() => {
+      if (!this.synth) { clearInterval(this._keepAliveInterval!); return; }
+      if (this.synth.speaking && !this.synth.paused) {
+        this.synth.pause();
+        this.synth.resume();
+      } else {
+        clearInterval(this._keepAliveInterval!);
+        this._keepAliveInterval = null;
+      }
+    }, 10_000);
   }
 
-  public resume() {
-    if (this.synth && this.synth.paused) {
-      this.synth.resume();
-    }
-  }
-
-  public stop() {
-    if (this.synth) {
-      this.synth.cancel();
-    }
+  private _clearSpeakState() {
     this.currentUtterance = null;
     this.currentlySpeakingMessageId = null;
+    if (this._keepAliveInterval) { clearInterval(this._keepAliveInterval); this._keepAliveInterval = null; }
   }
 
-  public isSpeaking(): boolean {
-    return this.synth ? (this.synth.speaking && !this.synth.paused) : false;
-  }
+  public pause()  { if (this.synth?.speaking && !this.synth.paused) this.synth.pause(); }
+  public resume() { if (this.synth?.paused) this.synth.resume(); }
+  public stop()   { this.synth?.cancel(); this._clearSpeakState(); }
 
-  public isPaused(): boolean {
-    return this.synth ? this.synth.paused : false;
-  }
+  public isSpeakingNow(): boolean { return !!(this.synth?.speaking && !this.synth.paused); }
+  public isPausedNow():   boolean { return !!this.synth?.paused; }
+  public getSpeakingMessageId(): string | null { return this.currentlySpeakingMessageId; }
 
-  public getSpeakingMessageId(): string | null {
-    return this.currentlySpeakingMessageId;
-  }
+  // ─────────────────────────────────────────────────────────────
+  // MIC AMPLITUDE VISUALISER
+  // ─────────────────────────────────────────────────────────────
 
-  /**
-   * Requests real microphone permission and connects Web Audio Analyser for live volume meter.
-   */
-  public async startMicrophoneWithVisualizer(
-    onAmplitude: (level: number) => void
-  ): Promise<boolean> {
+  public async startMicVisualiser(onAmplitude: (level: number) => void): Promise<boolean> {
     try {
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        this.micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        
-        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-        if (AudioCtx) {
-          this.audioContext = new AudioCtx();
-          if (this.audioContext.state === 'suspended') {
-            await this.audioContext.resume();
-          }
-          const source = this.audioContext.createMediaStreamSource(this.micStream);
-          this.analyserNode = this.audioContext.createAnalyser();
-          this.analyserNode.fftSize = 64;
-          source.connect(this.analyserNode);
+      if (!navigator.mediaDevices?.getUserMedia) return false;
+      this.micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
 
-          const dataArray = new Uint8Array(this.analyserNode.frequencyBinCount);
-          
-          const updateMeter = () => {
-            if (!this.analyserNode) return;
-            this.analyserNode.getByteFrequencyData(dataArray);
-            let sum = 0;
-            for (let i = 0; i < dataArray.length; i++) {
-              sum += dataArray[i];
-            }
-            const avg = sum / dataArray.length;
-            const normalized = Math.min(100, Math.round((avg / 128) * 100));
-            onAmplitude(normalized);
-            this.animFrameId = requestAnimationFrame(updateMeter);
-          };
+      const Ctx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!Ctx) return true; // mic granted but no AudioContext — still fine
 
-          updateMeter();
-        }
-        return true;
-      }
-      return false;
-    } catch (err) {
-      console.warn('Microphone access not granted or unavailable:', err);
+      this.audioContext = new Ctx();
+      if (this.audioContext.state === 'suspended') await this.audioContext.resume();
+
+      const src = this.audioContext.createMediaStreamSource(this.micStream);
+      this.analyserNode = this.audioContext.createAnalyser();
+      this.analyserNode.fftSize = 64;
+      src.connect(this.analyserNode);
+
+      const buf = new Uint8Array(this.analyserNode.frequencyBinCount);
+      const tick = () => {
+        if (!this.analyserNode) return;
+        this.analyserNode.getByteFrequencyData(buf);
+        const avg = buf.reduce((a, b) => a + b, 0) / buf.length;
+        onAmplitude(Math.min(100, Math.round((avg / 128) * 100)));
+        this.animFrameId = requestAnimationFrame(tick);
+      };
+      this.animFrameId = requestAnimationFrame(tick);
+      return true;
+    } catch {
       return false;
     }
   }
 
-  public stopMicrophoneVisualizer() {
-    if (this.animFrameId) {
-      cancelAnimationFrame(this.animFrameId);
-      this.animFrameId = null;
-    }
-    if (this.micStream) {
-      this.micStream.getTracks().forEach((t) => t.stop());
-      this.micStream = null;
-    }
-    if (this.audioContext) {
-      try {
-        this.audioContext.close();
-      } catch (_) {}
-      this.audioContext = null;
-    }
+  public stopMicVisualiser() {
+    if (this.animFrameId) { cancelAnimationFrame(this.animFrameId); this.animFrameId = null; }
+    this.micStream?.getTracks().forEach(t => t.stop());
+    this.micStream = null;
+    try { this.audioContext?.close(); } catch {}
+    this.audioContext = null;
+    this.analyserNode = null;
   }
+
+  // ─────────────────────────────────────────────────────────────
+  // SPEECH-TO-TEXT  (browser-native, offline-capable)
+  // ─────────────────────────────────────────────────────────────
 
   /**
-   * Listens to owner/user speech and streams real-time transcript.
+   * Starts real-time speech recognition.
+   *
+   * Flow:
+   *   onInterim(text) — called repeatedly while user speaks (live preview)
+   *   onResult(text)  — called ONCE when user finishes speaking (after silence)
+   *   onError(msg)    — called on error (permission denied, no support, etc.)
+   *   onEnd()         — called when recognition session ends (no result)
    */
   public listen(
-    lang: string = 'en',
+    lang: string,
     onInterim: (text: string) => void,
-    onResult: (finalText: string) => void,
-    onError: (err: any) => void,
-    onEnd: () => void
+    onResult:  (finalText: string) => void,
+    onError:   (msg: string) => void,
+    onEnd:     () => void
   ) {
-    const SpeechRecognition =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-
-    if (!SpeechRecognition) {
-      onError('Voice input is not supported by this browser. You can still type your message.');
+    if (!ShachinaVoiceEngine.SpeechRec) {
+      onError("Voice input isn't supported in this browser. You can use text chat instead.");
       onEnd();
       return;
     }
 
-    try {
-      this.stop(); // Stop audio playback before listening
-      const rec = new SpeechRecognition();
-      rec.continuous = false;
-      rec.interimResults = true;
+    // Clean up any previous session
+    this._stopRecognition();
 
-      if (lang === 'ne') {
-        rec.lang = 'ne-NP';
-      } else if (lang === 'hi') {
-        rec.lang = 'hi-IN';
-      } else {
-        rec.lang = 'en-US';
+    this.resultFired = false;
+
+    const rec = new ShachinaVoiceEngine.SpeechRec();
+    rec.continuous     = true;   // keep open so user can speak in longer sentences
+    rec.interimResults = true;   // get partial results for live preview
+    rec.maxAlternatives = 1;
+
+    if (lang === 'ne')      rec.lang = 'ne-NP';
+    else if (lang === 'hi') rec.lang = 'hi-IN';
+    else                    rec.lang = 'en-US';
+
+    let accumulated = '';
+
+    const fire = (text: string) => {
+      if (this.resultFired) return;
+      this.resultFired = true;
+      this._clearSilenceTimer();
+      this._stopRecognition(true);          // silent stop
+      if (text.trim()) onResult(text.trim());
+      else onEnd();
+    };
+
+    rec.onresult = (ev: any) => {
+      let interim = '';
+      for (let i = ev.resultIndex; i < ev.results.length; i++) {
+        const t = ev.results[i][0].transcript;
+        if (ev.results[i].isFinal) {
+          accumulated += (accumulated ? ' ' : '') + t.trim();
+        } else {
+          interim = t;
+        }
       }
 
-      rec.onresult = (event: any) => {
-        let interim = '';
-        let final = '';
+      // Show live preview = accumulated finals + current interim
+      const preview = (accumulated + (accumulated && interim ? ' ' : '') + interim).trim();
+      if (preview) {
+        onInterim(preview);
 
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            final += event.results[i][0].transcript;
-          } else {
-            interim += event.results[i][0].transcript;
-          }
-        }
+        // Reset silence timer — fires onResult 1.4 s after user stops talking
+        this._clearSilenceTimer();
+        this.silenceTimer = setTimeout(() => fire(preview), 1400);
+      }
+    };
 
-        if (interim) onInterim(interim);
-        if (final) onResult(final);
+    rec.onerror = (ev: any) => {
+      if (ev.error === 'no-speech') return; // transient; keep session alive
+      const msgs: Record<string, string> = {
+        'not-allowed':         'Microphone permission denied. Please allow access in browser settings.',
+        'service-not-allowed': 'Microphone permission denied. Please allow access in browser settings.',
+        'network':             'Network error during recognition. Check your connection.',
+        'aborted':             '',   // user cancelled — suppress
       };
+      const msg = msgs[ev.error] ?? `Voice recognition error (${ev.error}). Please try again.`;
+      this._clearSilenceTimer();
+      if (msg) onError(msg);
+    };
 
-      rec.onerror = (event: any) => {
-        let message = 'Voice recognition error. Please try again.';
-        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-          message = 'Microphone access is required for voice input. Please allow permissions.';
-        } else if (event.error === 'no-speech') {
-          message = "Sorry, I couldn't hear you. Please try again.";
-        }
-        onError(message);
-      };
+    rec.onend = () => {
+      this._clearSilenceTimer();
+      if (!this.resultFired) {
+        if (accumulated.trim()) fire(accumulated);
+        else onEnd();
+      }
+    };
 
-      rec.onend = () => {
-        onEnd();
-      };
-
+    try {
       rec.start();
       this.recognition = rec;
-    } catch (e) {
-      onError('Unable to start microphone. Please check browser permissions.');
+    } catch {
+      onError('Unable to start voice input. Please check microphone permissions.');
       onEnd();
     }
   }
 
   public stopListening() {
+    this._clearSilenceTimer();
+    this._stopRecognition();
+    this.stopMicVisualiser();
+  }
+
+  private _clearSilenceTimer() {
+    if (this.silenceTimer) { clearTimeout(this.silenceTimer); this.silenceTimer = null; }
+  }
+
+  private _stopRecognition(silent = false) {
     if (this.recognition) {
-      try {
-        this.recognition.stop();
-      } catch (_) {}
+      try { if (silent) this.recognition.abort(); else this.recognition.stop(); } catch {}
       this.recognition = null;
     }
-    this.stopMicrophoneVisualizer();
   }
 }
 
