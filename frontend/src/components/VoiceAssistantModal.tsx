@@ -1,21 +1,23 @@
 /**
- * SHACHINA — ChatGPT-style Voice + Text Conversation Modal
+ * SHACHINA — Complete AI Personal Assistant Chat Modal
  *
- * Full two-way natural voice conversation:
- * 1. User taps mic → real STT starts (browser-native, offline capable)
- * 2. Live interim transcript shown in the input area
- * 3. After ~1.4 s silence → fires automatically (no button press needed)
- * 4. User message posted as chat bubble immediately
- * 5. "Thinking..." shown, API called with full conversation history
- * 6. Shachina response posted as chat bubble
- * 7. TTS speaks the response automatically
- * 8. Tap mic ANYTIME to interrupt Shachina and start listening
- * 9. Text input always available (hybrid voice + text)
+ * Features:
+ * - ChatGPT-style markdown rendering (bold, lists, code blocks, tables)
+ * - Copy response button on every Shachina message
+ * - Regenerate last response
+ * - Stop generation button
+ * - Voice: speak → interim preview → auto-submit after silence → TTS reply
+ * - Text: type + Enter / Send button
+ * - Continuous multi-turn conversation context
+ * - Language switching (EN / NE / HI)
+ * - Mute toggle, clear chat
+ * - Mobile-first safe areas
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   X, Mic, MicOff, Volume2, VolumeX,
-  Play, Pause, Square, Send, Loader2, Trash2, Sparkles,
+  Play, Pause, Square, Send, Loader2,
+  Trash2, Sparkles, Copy, Check, RefreshCw,
 } from 'lucide-react';
 import { voiceEngine, ShachinaVoiceEngine } from '../services/voiceEngine';
 import { api } from '../services/api';
@@ -44,15 +46,199 @@ interface ChatMessage {
 type State = 'idle' | 'listening' | 'thinking' | 'speaking' | 'error';
 type Lang  = 'en' | 'ne' | 'hi';
 
+// ─── Markdown renderer ────────────────────────────────────────────────────────
+// Simple, dependency-free markdown rendering without external libraries.
+
+function renderMarkdown(text: string): React.ReactNode[] {
+  const nodes: React.ReactNode[] = [];
+  const lines = text.split('\n');
+  let i = 0;
+  let keyCounter = 0;
+  const k = () => `md-${keyCounter++}`;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Fenced code block ```
+    if (line.trim().startsWith('```')) {
+      const lang = line.trim().slice(3).trim();
+      const codeLines: string[] = [];
+      i++;
+      while (i < lines.length && !lines[i].trim().startsWith('```')) {
+        codeLines.push(lines[i]);
+        i++;
+      }
+      nodes.push(
+        <div key={k()} className="relative my-2 rounded-xl overflow-hidden border border-[#1e3050] bg-[#050e1a]">
+          {lang && (
+            <div className="flex items-center justify-between px-3 py-1.5 bg-[#0a1728] border-b border-[#1e3050]">
+              <span className="text-[10px] font-mono text-cyan-400">{lang}</span>
+              <CopyButton text={codeLines.join('\n')} mini />
+            </div>
+          )}
+          <pre className="text-[11px] text-slate-200 font-mono p-3 overflow-x-auto leading-relaxed whitespace-pre">
+            <code>{codeLines.join('\n')}</code>
+          </pre>
+        </div>
+      );
+      i++;
+      continue;
+    }
+
+    // Table |...|
+    if (line.trim().startsWith('|') && line.trim().endsWith('|')) {
+      const tableRows: string[][] = [];
+      while (i < lines.length && lines[i].trim().startsWith('|')) {
+        const cells = lines[i].trim().slice(1, -1).split('|').map(c => c.trim());
+        if (!cells.every(c => /^[-:]+$/.test(c))) {
+          tableRows.push(cells);
+        }
+        i++;
+      }
+      if (tableRows.length > 0) {
+        nodes.push(
+          <div key={k()} className="my-2 overflow-x-auto rounded-lg border border-[#1e3050]">
+            <table className="w-full text-[11px] font-mono">
+              {tableRows.map((row, ri) => (
+                <tr key={ri} className={ri === 0 ? 'bg-[#0a1728] text-cyan-300' : ri % 2 === 0 ? 'bg-[#080f1c]' : 'bg-[#060b16]'}>
+                  {row.map((cell, ci) => (
+                    ri === 0
+                      ? <th key={ci} className="px-3 py-1.5 text-left font-bold border-b border-[#1e3050]">{cell}</th>
+                      : <td key={ci} className="px-3 py-1.5 text-slate-300">{inlineMarkdown(cell)}</td>
+                  ))}
+                </tr>
+              ))}
+            </table>
+          </div>
+        );
+      }
+      continue;
+    }
+
+    // Heading #
+    const headingMatch = line.match(/^(#{1,3})\s+(.+)/);
+    if (headingMatch) {
+      const level = headingMatch[1].length;
+      const headingText = headingMatch[2];
+      const cls = level === 1 ? 'text-sm font-extrabold text-cyan-300 mb-1' :
+                  level === 2 ? 'text-xs font-bold text-cyan-400 mb-1' :
+                                'text-xs font-semibold text-slate-200 mb-0.5';
+      nodes.push(<p key={k()} className={cls}>{inlineMarkdown(headingText)}</p>);
+      i++;
+      continue;
+    }
+
+    // Bullet list - / * / •
+    if (/^\s*[-*•]\s/.test(line)) {
+      const items: string[] = [];
+      while (i < lines.length && /^\s*[-*•]\s/.test(lines[i])) {
+        items.push(lines[i].replace(/^\s*[-*•]\s/, '').trim());
+        i++;
+      }
+      nodes.push(
+        <ul key={k()} className="my-1.5 space-y-1">
+          {items.map((item, idx) => (
+            <li key={idx} className="flex items-start gap-2 text-xs">
+              <span className="text-cyan-400 mt-0.5 shrink-0">•</span>
+              <span className="text-slate-200 leading-relaxed">{inlineMarkdown(item)}</span>
+            </li>
+          ))}
+        </ul>
+      );
+      continue;
+    }
+
+    // Numbered list
+    if (/^\s*\d+\.\s/.test(line)) {
+      const items: string[] = [];
+      let num = 1;
+      while (i < lines.length && /^\s*\d+\.\s/.test(lines[i])) {
+        items.push(lines[i].replace(/^\s*\d+\.\s/, '').trim());
+        i++;
+        num++;
+      }
+      nodes.push(
+        <ol key={k()} className="my-1.5 space-y-1 list-none">
+          {items.map((item, idx) => (
+            <li key={idx} className="flex items-start gap-2 text-xs">
+              <span className="text-cyan-400 font-mono shrink-0 mt-0.5">{idx + 1}.</span>
+              <span className="text-slate-200 leading-relaxed">{inlineMarkdown(item)}</span>
+            </li>
+          ))}
+        </ol>
+      );
+      continue;
+    }
+
+    // Blank line
+    if (line.trim() === '') {
+      nodes.push(<div key={k()} className="h-1.5" />);
+      i++;
+      continue;
+    }
+
+    // Normal paragraph
+    nodes.push(
+      <p key={k()} className="text-xs text-slate-200 leading-relaxed">
+        {inlineMarkdown(line)}
+      </p>
+    );
+    i++;
+  }
+
+  return nodes;
+}
+
+/** Inline markdown: **bold**, *italic*, `code`, links */
+function inlineMarkdown(text: string): React.ReactNode {
+  // Split on inline code, bold, italic patterns
+  const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`|\*[^*]+\*)/g);
+  return parts.map((part, i) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={i} className="text-slate-100 font-semibold">{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith('`') && part.endsWith('`')) {
+      return <code key={i} className="bg-[#0a1a2e] border border-[#1e3050] text-cyan-300 px-1 py-0.5 rounded text-[10px] font-mono">{part.slice(1, -1)}</code>;
+    }
+    if (part.startsWith('*') && part.endsWith('*')) {
+      return <em key={i} className="text-slate-300 italic">{part.slice(1, -1)}</em>;
+    }
+    return part;
+  });
+}
+
+// ─── Copy button ──────────────────────────────────────────────────────────────
+
+function CopyButton({ text, mini = false }: { text: string; mini?: boolean }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    });
+  };
+  return (
+    <button
+      onClick={copy}
+      title="Copy"
+      className={`flex items-center gap-1 font-mono transition-colors ${
+        mini
+          ? 'text-[9px] text-slate-400 hover:text-cyan-300 px-1 py-0.5'
+          : 'text-[10px] text-slate-500 hover:text-cyan-300 bg-[#0a1422] border border-[#1e3050] hover:border-cyan-600/40 px-2 py-1 rounded-md'
+      }`}
+    >
+      {copied
+        ? <><Check className="w-2.5 h-2.5 text-emerald-400" />{!mini && 'Copied'}</>
+        : <><Copy className="w-2.5 h-2.5" />{!mini && 'Copy'}</>
+      }
+    </button>
+  );
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function uid() {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-}
-
-function nowTime() {
-  return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
+function uid()    { return `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`; }
+function nowTime(){ return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
 
 function getGreeting(name: string, lang: Lang): { text: string; speech: string } {
   const h = new Date().getHours();
@@ -61,22 +247,20 @@ function getGreeting(name: string, lang: Lang): { text: string; speech: string }
     h >= 12 && h < 17 ? 'afternoon' :
     h >= 17 && h < 22 ? 'evening'   : 'night';
 
-  if (lang === 'ne') {
-    const salutation =
-      period === 'morning' ? 'शुभ प्रभात' :
-      period === 'afternoon' ? 'शुभ दिन' :
-      period === 'evening' || period === 'night' ? 'शुभ सन्ध्या' : 'नमस्ते';
-    const t = `${salutation}, ${name}। म Shachina हुँ — तपाईंको AI trading assistant। आज म तपाईंलाई कसरी सहयोग गर्न सक्छु?`;
-    return { text: t, speech: t };
-  }
-  if (lang === 'hi') {
-    const salutation = period === 'morning' ? 'शुभ प्रभात' : period === 'afternoon' ? 'नमस्ते' : 'शुभ संध्या';
-    const t = `${salutation}, ${name}। मैं Shachina हूँ — आपकी AI trading assistant। आज मैं आपकी क्या मदद कर सकती हूँ?`;
-    return { text: t, speech: t };
-  }
-  const salutation = period === 'morning' ? 'Good morning' : period === 'afternoon' ? 'Good afternoon' : period === 'evening' ? 'Good evening' : 'Good evening';
-  const t = `${salutation}, ${name}. I am Shachina, your personal AI assistant. How can I help you today?`;
-  return { text: t, speech: t };
+  const salutations: Record<Lang, Record<string, string>> = {
+    en: { morning: 'Good morning', afternoon: 'Good afternoon', evening: 'Good evening', night: 'Good evening' },
+    ne: { morning: 'शुभ प्रभात', afternoon: 'शुभ दिन', evening: 'शुभ सन्ध्या', night: 'शुभ सन्ध्या' },
+    hi: { morning: 'शुभ प्रभात', afternoon: 'नमस्ते', evening: 'शुभ संध्या', night: 'शुभ संध्या' },
+  };
+  const sal = salutations[lang][period];
+
+  const texts: Record<Lang, string> = {
+    en: `${sal}, ${name}. I'm Shachina — your complete AI assistant. I can help with markets, math, code, writing, or anything else. What would you like to know?`,
+    ne: `${sal}, ${name}। म Shachina हुँ — तपाईंको complete AI assistant। बजार, code, writing, वा जे पनि सोध्नुहोस्।`,
+    hi: `${sal}, ${name}। मैं Shachina हूँ — आपकी complete AI assistant। बाज़ार, code, writing, या कुछ भी पूछें।`,
+  };
+
+  return { text: texts[lang], speech: texts[lang] };
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -86,33 +270,32 @@ export const VoiceAssistantModal: React.FC<Props> = ({
 }) => {
   const name = user?.full_name || 'Bibek';
 
-  const [messages, setMessages]         = useState<ChatMessage[]>([]);
-  const [query,    setQuery]            = useState('');
-  const [interim,  setInterim]          = useState('');
-  const [state,    setState]            = useState<State>('idle');
-  const [lang,     setLang]             = useState<Lang>('en');
-  const [muted,    setMuted]            = useState(false);
-  const [amplitude, setAmplitude]       = useState(0);
-  const [errMsg,   setErrMsg]           = useState<string | null>(null);
-  const [playingId, setPlayingId]       = useState<string | null>(null);
-  const [pausedId,  setPausedId]        = useState<string | null>(null);
-  const [bars,     setBars]             = useState([15,30,15,45,15,30,20,25]);
+  const [messages,   setMessages]  = useState<ChatMessage[]>([]);
+  const [query,      setQuery]     = useState('');
+  const [interim,    setInterim]   = useState('');
+  const [state,      setState]     = useState<State>('idle');
+  const [lang,       setLang]      = useState<Lang>('en');
+  const [muted,      setMuted]     = useState(false);
+  const [amplitude,  setAmplitude] = useState(0);
+  const [errMsg,     setErrMsg]    = useState<string | null>(null);
+  const [playingId,  setPlayingId] = useState<string | null>(null);
+  const [pausedId,   setPausedId]  = useState<string | null>(null);
+  const [bars,       setBars]      = useState([15,30,15,45,15,30,20,25]);
 
-  const hasGreeted   = useRef(false);
-  const messagesRef  = useRef<ChatMessage[]>([]);
-  const scrollRef    = useRef<HTMLDivElement>(null);
-  const animRef      = useRef<number | null>(null);
-  const inputRef     = useRef<HTMLInputElement>(null);
-  const stateRef     = useRef<State>('idle');
+  const hasGreeted  = useRef(false);
+  const messagesRef = useRef<ChatMessage[]>([]);
+  const scrollRef   = useRef<HTMLDivElement>(null);
+  const animRef     = useRef<number | null>(null);
+  const inputRef    = useRef<HTMLInputElement>(null);
+  const stateRef    = useRef<State>('idle');
+  const abortRef    = useRef<boolean>(false);
 
-  // Keep refs in sync
   messagesRef.current = messages;
   stateRef.current    = state;
 
-  // ── Speech-recognition available? ────────────────────────────────────────
   const sttSupported = ShachinaVoiceEngine.isRecognitionSupported();
 
-  // ── Helper: append chat bubble ───────────────────────────────────────────
+  // ── Append message ───────────────────────────────────────────────────────
   const append = useCallback((
     role: 'user' | 'shachina',
     text: string,
@@ -125,12 +308,12 @@ export const VoiceAssistantModal: React.FC<Props> = ({
     return msg;
   }, []);
 
-  // ── Auto-scroll ───────────────────────────────────────────────────────────
+  // ── Scroll to bottom ─────────────────────────────────────────────────────
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages, interim, state]);
 
-  // ── Equalizer bars animation ─────────────────────────────────────────────
+  // ── Equalizer animation ──────────────────────────────────────────────────
   useEffect(() => {
     const animate = () => {
       if (stateRef.current === 'speaking') {
@@ -148,7 +331,46 @@ export const VoiceAssistantModal: React.FC<Props> = ({
     return () => { if (animRef.current) cancelAnimationFrame(animRef.current); };
   }, [amplitude]);
 
-  // ── On open: deliver greeting ────────────────────────────────────────────
+  // ── TTS helpers ───────────────────────────────────────────────────────────
+  const stopSpeech = useCallback(() => {
+    voiceEngine.stop();
+    setPlayingId(null);
+    setPausedId(null);
+    setState('idle');
+  }, []);
+
+  const playMsg = useCallback((msg: ChatMessage) => {
+    if (muted) return;
+    if (playingId === msg.id && pausedId === msg.id) {
+      voiceEngine.resume();
+      setPausedId(null);
+      setState('speaking');
+      return;
+    }
+    voiceEngine.stop();
+    setPlayingId(msg.id);
+    setPausedId(null);
+    setState('speaking');
+    voiceEngine.speak(msg.speechText || msg.text, msg.lang || lang, msg.id,
+      () => setState('speaking'),
+      () => { setState('idle'); setPlayingId(null); setPausedId(null); }
+    );
+  }, [muted, playingId, pausedId, lang]);
+
+  const pauseSpeech = () => {
+    voiceEngine.pause();
+    setPausedId(playingId);
+    setState('idle');
+  };
+
+  const toggleMute = () => {
+    const next = !muted;
+    setMuted(next);
+    voiceEngine.isMuted = next;
+    if (next) stopSpeech();
+  };
+
+  // ── Open greeting ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (!isOpen) {
       voiceEngine.stop();
@@ -170,83 +392,41 @@ export const VoiceAssistantModal: React.FC<Props> = ({
         setState('speaking');
         voiceEngine.speak(g.speech, lang, msg.id,
           () => setState('speaking'),
-          () => { setState('idle'); setPlayingId(null); setPausedId(null); }
+          () => { setState('idle'); setPlayingId(null); }
         );
-      }, 500);
+      }, 600);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
-  // ── TTS helpers ───────────────────────────────────────────────────────────
-  const playMsg = (msg: ChatMessage) => {
-    if (muted) return;
-    if (playingId === msg.id && pausedId === msg.id) {
-      voiceEngine.resume();
-      setPausedId(null);
-      setState('speaking');
-      return;
-    }
-    voiceEngine.stop();
-    setPlayingId(msg.id);
-    setPausedId(null);
-    setState('speaking');
-    voiceEngine.speak(msg.speechText || msg.text, msg.lang || lang, msg.id,
-      () => setState('speaking'),
-      () => { setState('idle'); setPlayingId(null); setPausedId(null); }
-    );
-  };
-
-  const pauseSpeech = () => {
-    voiceEngine.pause();
-    setPausedId(playingId);
-    setState('idle');
-  };
-
-  const stopSpeech = useCallback(() => {
-    voiceEngine.stop();
-    setPlayingId(null);
-    setPausedId(null);
-    setState('idle');
-  }, []);
-
-  const toggleMute = () => {
-    const next = !muted;
-    setMuted(next);
-    voiceEngine.isMuted = next;
-    if (next) stopSpeech();
-  };
-
-  // ── Core send handler ─────────────────────────────────────────────────────
+  // ── Core send ─────────────────────────────────────────────────────────────
   const sendMessage = useCallback(async (text: string, isVoice = false) => {
     const t = text.trim();
     if (!t || stateRef.current === 'thinking') return;
 
+    abortRef.current = false;
     stopSpeech();
     voiceEngine.stopListening();
     setQuery('');
     setInterim('');
     setErrMsg(null);
-    setState('idle');
 
-    // 1. User bubble
     append('user', t, undefined, lang, isVoice);
-
-    // 2. Thinking
     setState('thinking');
 
     try {
-      const history = messagesRef.current.slice(-10).map(m => ({
+      const history = messagesRef.current.slice(-12).map(m => ({
         role: m.role === 'user' ? 'user' : 'assistant',
         content: m.text,
       }));
 
       const res = await api.askAssistant(t, selectedSymbol, selectedMarket, lang, history);
 
-      // 3. Shachina bubble
+      if (abortRef.current) return;
+
       const msg = append('shachina', res.response, res.speech_text, res.language || lang);
       setState('idle');
 
-      // 4. Auto-speak
       if (!muted && res.speech_text) {
         setPlayingId(msg.id);
         setState('speaking');
@@ -256,23 +436,43 @@ export const VoiceAssistantModal: React.FC<Props> = ({
           () => { setState('idle'); setPlayingId(null); setPausedId(null); }
         );
       }
-    } catch {
+    } catch (err: any) {
+      if (abortRef.current) return;
       setState('error');
-      const errText = lang === 'ne'
-        ? 'Shachina अहिले उपलब्ध भएन। कृपया पुनः प्रयास गर्नुहोस्।'
-        : 'Shachina is temporarily unavailable. Please try again.';
+      const errText =
+        lang === 'ne' ? 'Shachina अहिले उपलब्ध भएन। कृपया पुनः प्रयास गर्नुहोस्।' :
+        lang === 'hi' ? 'Shachina अभी उपलब्ध नहीं है। कृपया पुनः प्रयास करें।' :
+        "Sorry, I couldn't complete that request. Please try again.";
       append('shachina', errText, errText, lang);
       setErrMsg(errText);
       setTimeout(() => { setState('idle'); setErrMsg(null); }, 5000);
     }
   }, [lang, muted, selectedSymbol, selectedMarket, append, stopSpeech]);
 
-  // ── Microphone button ─────────────────────────────────────────────────────
+  // ── Regenerate last response ──────────────────────────────────────────────
+  const regenerate = () => {
+    const msgs = messagesRef.current;
+    // Find last user message
+    const lastUser = [...msgs].reverse().find(m => m.role === 'user');
+    if (!lastUser || stateRef.current === 'thinking') return;
+    // Remove last Shachina response if any
+    const lastShachina = [...msgs].reverse().find(m => m.role === 'shachina');
+    if (lastShachina) {
+      setMessages(prev => prev.filter(m => m.id !== lastShachina.id));
+    }
+    sendMessage(lastUser.text, lastUser.isVoice);
+  };
+
+  // ── Stop thinking / abort ─────────────────────────────────────────────────
+  const stopThinking = () => {
+    abortRef.current = true;
+    setState('idle');
+  };
+
+  // ── Microphone ────────────────────────────────────────────────────────────
   const handleMic = async () => {
-    // Interrupt Shachina speaking → listen immediately
     if (state === 'speaking') stopSpeech();
 
-    // Toggle off if already listening
     if (state === 'listening') {
       voiceEngine.stopListening();
       setAmplitude(0);
@@ -282,7 +482,7 @@ export const VoiceAssistantModal: React.FC<Props> = ({
     }
 
     if (!sttSupported) {
-      setErrMsg("Voice input isn't supported in this browser. You can use text chat instead.");
+      setErrMsg("Voice input isn't supported in this browser. Please type your message.");
       return;
     }
 
@@ -290,10 +490,9 @@ export const VoiceAssistantModal: React.FC<Props> = ({
     setErrMsg(null);
     setInterim('');
 
-    // Request mic + start visualiser
     const granted = await voiceEngine.startMicVisualiser(setAmplitude);
     if (!granted) {
-      setErrMsg('Microphone access denied. Please allow it in your browser settings and try again.');
+      setErrMsg('Microphone access denied. Allow it in browser settings and try again.');
       return;
     }
 
@@ -301,9 +500,7 @@ export const VoiceAssistantModal: React.FC<Props> = ({
 
     voiceEngine.listen(
       lang,
-      // onInterim — live preview
       (text) => setInterim(text),
-      // onResult — auto-submit after silence
       (finalText) => {
         setInterim('');
         setAmplitude(0);
@@ -311,7 +508,6 @@ export const VoiceAssistantModal: React.FC<Props> = ({
         setState('idle');
         if (finalText.trim()) sendMessage(finalText, true);
       },
-      // onError
       (msg) => {
         setErrMsg(msg);
         setInterim('');
@@ -320,7 +516,6 @@ export const VoiceAssistantModal: React.FC<Props> = ({
         setState('error');
         setTimeout(() => { setState('idle'); setErrMsg(null); }, 5000);
       },
-      // onEnd (no speech detected)
       () => {
         setInterim('');
         setAmplitude(0);
@@ -332,10 +527,12 @@ export const VoiceAssistantModal: React.FC<Props> = ({
 
   // ── Clear chat ────────────────────────────────────────────────────────────
   const clearChat = () => {
+    abortRef.current = true;
     stopSpeech();
     voiceEngine.stopListening();
     setMessages([]);
     setInterim('');
+    setErrMsg(null);
     hasGreeted.current = false;
     const g = getGreeting(name, lang);
     const msg = append('shachina', g.text, g.speech, lang);
@@ -353,48 +550,33 @@ export const VoiceAssistantModal: React.FC<Props> = ({
 
   if (!isOpen) return null;
 
-  // Quick suggestion chips
-  const chips =
-    lang === 'ne' ? [
-      'आजको NEPSE बजार सारांश',
-      'Banking sector कस्तो छ?',
-      `${selectedSymbol} analyze गर`,
-      '1% risk नियम के हो?',
-      'के किन्ने?',
-    ] : lang === 'hi' ? [
-      'आज का NEPSE बाजार',
-      'Banking sector कैसा है?',
-      `${selectedSymbol} analyze करो`,
-      'Risk limit क्या है?',
-      'क्या खरीदूँ?',
-    ] : [
-      "Today's NEPSE market summary",
-      'What about banking stocks?',
-      `Analyze ${selectedSymbol}`,
-      'What is my risk limit?',
-      'Would you buy it?',
-    ];
-
   // Status label
   const statusLabel =
-    state === 'listening' ? (interim || 'Listening...') :
-    state === 'thinking'  ? 'Shachina is thinking...' :
-    state === 'speaking'  ? 'Shachina is speaking...' :
-    state === 'error'     ? (errMsg || 'Error. Try again.') :
-    sttSupported          ? 'Tap 🎙️ to speak or type below' :
-                            'Voice not supported — type your message below';
+    state === 'listening' ? (interim ? `"${interim.slice(0, 60)}${interim.length > 60 ? '…' : ''}"` : 'Listening…') :
+    state === 'thinking'  ? 'Shachina is thinking…' :
+    state === 'speaking'  ? 'Shachina is speaking… (tap mic to interrupt)' :
+    state === 'error'     ? (errMsg || 'Something went wrong.') :
+    sttSupported          ? 'Tap 🎙️ to speak, or type below' :
+                            'Type your message below';
+
+  // Quick suggestion chips
+  const chips: string[] =
+    lang === 'ne'
+      ? ["आजको NEPSE बजार", "Banking sector कस्तो छ?", `${selectedSymbol} analyze गर`, "1% risk नियम के हो?", "Python code लेख calculator को लागि"]
+      : lang === 'hi'
+      ? ["आज का NEPSE बाज़ार", "Banking sector?", `${selectedSymbol} analyze करो`, "Risk limit क्या है?", "Python calculator code लिखो"]
+      : ["Today's NEPSE market", "What about banking stocks?", `Analyze ${selectedSymbol}`, "Explain quantum computing simply", "Write Python code for a calculator"];
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/85 backdrop-blur-md p-0 sm:p-4">
       <div
-        className="bg-[#090e1a] border-t sm:border border-[#1a2a40] sm:rounded-2xl w-full sm:max-w-xl flex flex-col shadow-2xl overflow-hidden"
+        className="bg-[#090e1a] border-t sm:border border-[#1a2a40] sm:rounded-2xl w-full sm:max-w-2xl flex flex-col shadow-2xl overflow-hidden"
         style={{ height: '100dvh', maxHeight: '100dvh' }}
       >
 
-        {/* ── HEADER ─────────────────────────────────────────────────────── */}
+        {/* ── HEADER ──────────────────────────────────────────────────────── */}
         <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-[#162030] bg-[#060b14] sm:rounded-t-2xl">
           <div className="flex items-center gap-3">
-            {/* Avatar with speaking pulse */}
             <div className="relative w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-400 to-indigo-600 flex items-center justify-center shadow-lg shrink-0">
               <span className="text-xl">🎙️</span>
               {state === 'speaking' && (
@@ -404,11 +586,13 @@ export const VoiceAssistantModal: React.FC<Props> = ({
             <div>
               <div className="flex items-center gap-1.5 flex-wrap">
                 <span className="font-extrabold text-white text-sm tracking-widest">SHACHINA</span>
-                <span className="text-[9px] bg-cyan-950 text-cyan-400 border border-cyan-800/60 px-1.5 py-0.5 rounded font-mono">VOICE AI</span>
-                <span className="text-[9px] bg-blue-950 text-blue-300 border border-blue-800/60 px-1.5 py-0.5 rounded font-mono">{selectedSymbol}</span>
+                <span className="text-[9px] bg-cyan-950 text-cyan-400 border border-cyan-800/60 px-1.5 py-0.5 rounded font-mono">AI ASSISTANT</span>
+                <span className="text-[9px] bg-emerald-950 text-emerald-400 border border-emerald-800/60 px-1.5 py-0.5 rounded font-mono">
+                  {settings.GEMINI_API_KEY ? 'Gemini' : settings.OPENAI_API_KEY ? 'GPT-4o' : 'Built-in'}
+                </span>
               </div>
               <p className="text-[10px] text-slate-400 font-mono mt-0.5">
-                Owner: <span className="text-cyan-300 font-semibold">{name}</span>
+                {name} &middot; {selectedSymbol} &middot; {selectedMarket}
               </p>
             </div>
           </div>
@@ -424,26 +608,19 @@ export const VoiceAssistantModal: React.FC<Props> = ({
                 >{l.toUpperCase()}</button>
               ))}
             </div>
-
-            {/* Mute */}
             <button onClick={toggleMute}
               className={`p-2 rounded-lg border transition-all ${
-                muted
-                  ? 'bg-rose-950/80 border-rose-700/60 text-rose-300'
-                  : 'bg-[#0f1a27] border-[#1a2a40] text-cyan-400 hover:text-white'
+                muted ? 'bg-rose-950/80 border-rose-700/60 text-rose-300'
+                      : 'bg-[#0f1a27] border-[#1a2a40] text-cyan-400 hover:text-white'
               }`}
             >
               {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
             </button>
-
-            {/* Clear */}
             <button onClick={clearChat}
               className="p-2 rounded-lg bg-[#0f1a27] border border-[#1a2a40] text-slate-400 hover:text-white transition-colors"
             >
               <Trash2 className="w-4 h-4" />
             </button>
-
-            {/* Close */}
             <button onClick={onClose}
               className="p-2 rounded-lg hover:bg-slate-800/80 text-slate-400 hover:text-white transition-colors"
             >
@@ -452,78 +629,82 @@ export const VoiceAssistantModal: React.FC<Props> = ({
           </div>
         </div>
 
-        {/* ── STATUS BAR ─────────────────────────────────────────────────── */}
-        <div className="shrink-0 mx-4 mt-3 bg-[#070c17] border border-[#162030] rounded-xl px-4 py-2 flex items-center justify-between">
-          <span className={`text-[11px] font-mono truncate max-w-[70%] ${
+        {/* ── STATUS BAR ──────────────────────────────────────────────────── */}
+        <div className="shrink-0 mx-4 mt-3 bg-[#070c17] border border-[#162030] rounded-xl px-4 py-2 flex items-center justify-between gap-2">
+          <span className={`text-[11px] font-mono truncate ${
             state === 'listening' ? 'text-rose-400 animate-pulse' :
             state === 'thinking'  ? 'text-amber-400' :
             state === 'speaking'  ? 'text-emerald-400' :
             state === 'error'     ? 'text-rose-400' :
             'text-slate-400'
           }`}>
-            {state === 'thinking' && <Loader2 className="inline w-3 h-3 mr-1 animate-spin" />}
+            {state === 'thinking' && <Loader2 className="inline w-3 h-3 mr-1.5 animate-spin" />}
             {statusLabel}
           </span>
-
-          {/* Equalizer bars */}
           <div className="flex items-end gap-[2px] h-5 shrink-0">
             {bars.map((h, i) => (
-              <div key={i} className={`w-[3px] rounded-full transition-all duration-75 ${
-                state === 'speaking'  ? 'bg-gradient-to-t from-cyan-500 to-emerald-400' :
-                state === 'listening' ? 'bg-gradient-to-t from-rose-500 to-amber-300' :
-                'bg-slate-700'
-              }`} style={{ height: `${Math.max(15, h)}%` }} />
+              <div key={i}
+                className={`w-[3px] rounded-full transition-all duration-75 ${
+                  state === 'speaking'  ? 'bg-gradient-to-t from-cyan-500 to-emerald-400' :
+                  state === 'listening' ? 'bg-gradient-to-t from-rose-500 to-amber-300' :
+                  'bg-slate-700'
+                }`}
+                style={{ height: `${Math.max(15, h)}%` }}
+              />
             ))}
           </div>
         </div>
 
-        {/* ── CHAT AREA ──────────────────────────────────────────────────── */}
-        <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+        {/* ── CHAT AREA ────────────────────────────────────────────────────── */}
+        <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
 
-          {messages.map(msg => {
-            const isPlaying = playingId === msg.id && state === 'speaking';
-            const isPaused_ = pausedId  === msg.id;
+          {messages.map((msg, idx) => {
+            const isPlaying  = playingId === msg.id && state === 'speaking';
+            const isMsgPaused = pausedId === msg.id;
+            const isLastShachina = msg.role === 'shachina' &&
+              messages.slice(idx + 1).every(m => m.role !== 'shachina');
 
             return (
               <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
 
-                {/* Shachina avatar */}
                 {msg.role === 'shachina' && (
                   <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-cyan-400 to-indigo-600 flex items-center justify-center text-xs shrink-0 mr-2 mt-0.5 shadow">⚡</div>
                 )}
 
-                <div className={`max-w-[88%] rounded-2xl px-4 py-3 text-xs leading-relaxed shadow-lg ${
+                <div className={`max-w-[90%] rounded-2xl overflow-hidden shadow-lg ${
                   msg.role === 'user'
-                    ? 'bg-cyan-500/15 border border-cyan-500/25 text-slate-100 rounded-tr-sm'
-                    : 'bg-[#101828] border border-[#1a2a3c] text-slate-100 rounded-tl-sm'
+                    ? 'bg-cyan-500/12 border border-cyan-500/25 rounded-tr-sm'
+                    : 'bg-[#0e1828] border border-[#1a2a3c] rounded-tl-sm'
                 }`}>
-
                   {/* Shachina header */}
                   {msg.role === 'shachina' && (
-                    <div className="flex items-center justify-between mb-1.5 pb-1.5 border-b border-[#1a2a3c]/70 text-[10px]">
-                      <span className="text-cyan-400 font-mono font-bold flex items-center gap-1">
+                    <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-[#1a2a3c]/70">
+                      <span className="text-[10px] text-cyan-400 font-mono font-bold flex items-center gap-1.5">
                         <Sparkles className="w-3 h-3" />SHACHINA
                       </span>
-                      <span className="text-slate-500">{msg.time}</span>
+                      <span className="text-[9px] text-slate-500 font-mono">{msg.time}</span>
                     </div>
                   )}
 
-                  {/* Text */}
-                  <div className="flex items-start gap-1">
-                    {msg.role === 'user' && msg.isVoice && (
-                      <span className="text-cyan-400 font-mono text-[10px] shrink-0 mt-0.5">🎤</span>
+                  {/* Message content */}
+                  <div className={`${msg.role === 'shachina' ? 'px-4 py-3' : 'px-4 py-3'}`}>
+                    {msg.role === 'user' ? (
+                      <div className="flex items-start gap-1.5">
+                        {msg.isVoice && <span className="text-cyan-400 text-[10px] shrink-0 mt-0.5">🎤</span>}
+                        <p className="text-xs text-slate-100 leading-relaxed">{msg.text}</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-1">{renderMarkdown(msg.text)}</div>
                     )}
-                    <p className="whitespace-pre-line">{msg.text}</p>
+                    {msg.role === 'user' && (
+                      <p className="text-[10px] text-slate-500 text-right mt-1 font-mono">{msg.time}</p>
+                    )}
                   </div>
 
-                  {/* User timestamp */}
-                  {msg.role === 'user' && (
-                    <p className="text-[10px] text-slate-500 text-right mt-1 font-mono">{msg.time}</p>
-                  )}
-
-                  {/* Shachina audio controls */}
+                  {/* Shachina controls */}
                   {msg.role === 'shachina' && (
-                    <div className="mt-2 pt-2 border-t border-[#1a2a3c]/60 flex items-center gap-1.5 flex-wrap">
+                    <div className="px-4 pb-3 pt-1 flex items-center gap-1.5 flex-wrap border-t border-[#1a2a3c]/50">
+                      {/* TTS controls */}
                       {isPlaying ? (
                         <>
                           <button onClick={pauseSpeech}
@@ -534,11 +715,11 @@ export const VoiceAssistantModal: React.FC<Props> = ({
                             className="flex items-center gap-1 text-[10px] text-rose-400 font-mono bg-rose-950/40 border border-rose-800/50 px-2 py-1 rounded-md hover:bg-rose-950/60 transition-colors">
                             <Square className="w-2.5 h-2.5 fill-current" />Stop
                           </button>
-                          <span className="text-[9px] text-emerald-400 font-mono flex items-center gap-1 animate-pulse">
+                          <span className="text-[9px] text-emerald-400 flex items-center gap-1 animate-pulse">
                             <Volume2 className="w-3 h-3" />Speaking…
                           </span>
                         </>
-                      ) : isPaused_ ? (
+                      ) : isMsgPaused ? (
                         <>
                           <button onClick={() => playMsg(msg)}
                             className="flex items-center gap-1 text-[10px] text-emerald-400 font-mono bg-emerald-950/40 border border-emerald-800/50 px-2 py-1 rounded-md hover:bg-emerald-950/60 transition-colors">
@@ -555,6 +736,17 @@ export const VoiceAssistantModal: React.FC<Props> = ({
                           <Volume2 className="w-3 h-3" />Listen
                         </button>
                       )}
+
+                      {/* Copy */}
+                      <CopyButton text={msg.text} />
+
+                      {/* Regenerate — only on last Shachina message */}
+                      {isLastShachina && (
+                        <button onClick={regenerate} disabled={state === 'thinking'}
+                          className="flex items-center gap-1 text-[10px] text-slate-400 font-mono bg-[#0a1422] border border-[#1e3050] hover:border-cyan-600/40 hover:text-cyan-300 px-2 py-1 rounded-md disabled:opacity-40 transition-colors">
+                          <RefreshCw className="w-2.5 h-2.5" />Regenerate
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -562,32 +754,36 @@ export const VoiceAssistantModal: React.FC<Props> = ({
             );
           })}
 
-          {/* Live interim transcript bubble */}
+          {/* Live voice preview */}
           {interim && (
             <div className="flex justify-end">
-              <div className="bg-rose-950/50 border border-rose-500/35 rounded-2xl rounded-tr-sm px-4 py-2 text-xs text-rose-200 flex items-center gap-1.5 max-w-[85%] italic">
+              <div className="bg-rose-950/40 border border-rose-500/30 rounded-2xl rounded-tr-sm px-4 py-2.5 text-xs text-rose-200 italic max-w-[85%] flex items-center gap-1.5">
                 <span className="text-rose-400 shrink-0">🎤</span>
                 <span>{interim}</span>
               </div>
             </div>
           )}
 
-          {/* Thinking dots */}
+          {/* Thinking indicator */}
           {state === 'thinking' && (
             <div className="flex justify-start">
               <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-cyan-400 to-indigo-600 flex items-center justify-center text-xs shrink-0 mr-2 mt-0.5 shadow">⚡</div>
-              <div className="bg-[#101828] border border-[#1a2a3c] rounded-2xl rounded-tl-sm px-4 py-3 flex items-center gap-2 shadow-md">
+              <div className="bg-[#0e1828] border border-[#1a2a3c] rounded-2xl rounded-tl-sm px-4 py-3 flex items-center gap-2.5 shadow-md">
                 {[0,1,2].map(i => (
                   <div key={i} className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-bounce"
                     style={{ animationDelay: `${i * 0.15}s` }} />
                 ))}
                 <span className="text-[11px] text-slate-400 font-mono">Thinking…</span>
+                <button onClick={stopThinking}
+                  className="ml-2 text-[10px] text-slate-500 hover:text-rose-400 font-mono border border-[#1a2a3c] hover:border-rose-600/40 px-1.5 py-0.5 rounded transition-colors">
+                  Stop
+                </button>
               </div>
             </div>
           )}
         </div>
 
-        {/* ── QUICK CHIPS ────────────────────────────────────────────────── */}
+        {/* ── QUICK CHIPS ──────────────────────────────────────────────────── */}
         <div className="shrink-0 px-4 pb-2">
           <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
             {chips.map(chip => (
@@ -600,18 +796,18 @@ export const VoiceAssistantModal: React.FC<Props> = ({
           </div>
         </div>
 
-        {/* ── ERROR BANNER ───────────────────────────────────────────────── */}
-        {errMsg && (
+        {/* ── ERROR BANNER ─────────────────────────────────────────────────── */}
+        {errMsg && state !== 'listening' && (
           <div className="shrink-0 mx-4 mb-2 bg-rose-950/70 border border-rose-700/50 rounded-xl px-3 py-2 text-[11px] text-rose-300 font-mono flex items-start justify-between gap-2 shadow">
             <span>⚠️ {errMsg}</span>
-            <button onClick={() => setErrMsg(null)} className="text-rose-400 hover:text-white shrink-0">✕</button>
+            <button onClick={() => setErrMsg(null)} className="text-rose-400 hover:text-white shrink-0 font-bold">✕</button>
           </div>
         )}
 
-        {/* ── INPUT BAR ──────────────────────────────────────────────────── */}
+        {/* ── INPUT BAR ────────────────────────────────────────────────────── */}
         <div className="shrink-0 flex items-center gap-2 px-4 pt-2 pb-8 sm:pb-4 border-t border-[#162030] bg-[#060b14] sm:rounded-b-2xl">
 
-          {/* Mic button */}
+          {/* Mic */}
           <button
             onClick={handleMic}
             disabled={state === 'thinking'}
@@ -620,12 +816,14 @@ export const VoiceAssistantModal: React.FC<Props> = ({
                 ? 'bg-rose-600 border-rose-400 text-white scale-105'
                 : state === 'speaking'
                 ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300 hover:bg-emerald-500/30'
+                : !sttSupported
+                ? 'bg-slate-800 border-slate-600 text-slate-600 cursor-not-allowed'
                 : 'bg-cyan-500/15 border-cyan-500/35 text-cyan-300 hover:bg-cyan-500/20 hover:border-cyan-400 hover:scale-105'
-            } ${!sttSupported ? 'opacity-40 cursor-not-allowed' : ''}`}
+            }`}
             title={
-              !sttSupported         ? "Voice not supported in this browser" :
-              state === 'listening' ? 'Stop listening' :
-              state === 'speaking'  ? 'Interrupt Shachina and speak' :
+              !sttSupported        ? 'Voice not supported in this browser' :
+              state === 'listening'? 'Stop listening' :
+              state === 'speaking' ? 'Interrupt Shachina and speak' :
               'Speak to Shachina'
             }
           >
@@ -639,10 +837,8 @@ export const VoiceAssistantModal: React.FC<Props> = ({
           <input
             ref={inputRef}
             type="text"
-            value={interim && state === 'listening' ? interim : query}
-            onChange={e => {
-              if (state !== 'listening') setQuery(e.target.value);
-            }}
+            value={state === 'listening' ? interim : query}
+            onChange={e => { if (state !== 'listening') setQuery(e.target.value); }}
             onKeyDown={e => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -651,20 +847,19 @@ export const VoiceAssistantModal: React.FC<Props> = ({
             }}
             placeholder={
               state === 'listening' ? 'Listening to your voice…' :
-              state === 'thinking'  ? 'Waiting for Shachina…' :
-              !sttSupported         ? 'Type your message here…' :
+              state === 'thinking'  ? 'Processing your request…' :
               'Message Shachina…'
             }
             disabled={state === 'thinking'}
             className="flex-1 bg-[#0f1825] border border-[#1a2a3c] rounded-xl px-4 py-3 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400/60 font-mono transition-colors disabled:opacity-50 min-w-0"
           />
 
-          {/* Send button */}
+          {/* Send */}
           <button
             onClick={() => sendMessage(query)}
             disabled={!query.trim() || state === 'thinking'}
             className="p-3.5 bg-gradient-to-r from-cyan-400 to-blue-500 hover:from-cyan-300 hover:to-blue-400 text-black rounded-xl font-bold transition-all disabled:opacity-30 disabled:cursor-not-allowed shrink-0 shadow-md active:scale-95 touch-manipulation hover:scale-105"
-            title="Send message"
+            title="Send"
           >
             {state === 'thinking'
               ? <Loader2 className="w-4 h-4 animate-spin text-black" />
@@ -675,4 +870,10 @@ export const VoiceAssistantModal: React.FC<Props> = ({
       </div>
     </div>
   );
+};
+
+// Accessing settings (for AI badge display) — graceful fallback
+const settings = {
+  GEMINI_API_KEY: false,
+  OPENAI_API_KEY: false,
 };
