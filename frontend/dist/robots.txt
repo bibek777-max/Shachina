@@ -1,0 +1,8 @@
+# SHACHINA Search Engine Directives
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /docs
+Disallow: /openapi.json
+
+Sitemap: https://shachina.ai/sitemap.xml

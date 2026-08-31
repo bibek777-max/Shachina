@@ -30,6 +30,14 @@ services:
         fromDatabase:
           name: shachina-db
           property: connectionString
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: TRADING_API_KEY
+        sync: false
+      - key: TRADING_API_SECRET
+        sync: false
 
 databases:
   - name: shachina-db

@@ -96,6 +96,42 @@ async def health_check():
     }
 
 
+@app.get("/robots.txt", response_class=Response)
+async def robots_txt():
+    content = (
+        "# SHACHINA Search Engine Directives\n"
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Disallow: /api/\n"
+        "Disallow: /docs\n"
+        "Disallow: /openapi.json\n\n"
+        "Sitemap: https://shachina.ai/sitemap.xml\n"
+    )
+    return Response(content=content, media_type="text/plain")
+
+
+@app.get("/sitemap.xml", response_class=Response)
+async def sitemap_xml():
+    content = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        '  <url>\n'
+        '    <loc>https://shachina.ai/</loc>\n'
+        '    <lastmod>2026-08-31</lastmod>\n'
+        '    <changefreq>daily</changefreq>\n'
+        '    <priority>1.0</priority>\n'
+        '  </url>\n'
+        '  <url>\n'
+        '    <loc>https://www.shachina.ai/</loc>\n'
+        '    <lastmod>2026-08-31</lastmod>\n'
+        '    <changefreq>daily</changefreq>\n'
+        '    <priority>0.9</priority>\n'
+        '  </url>\n'
+        '</urlset>\n'
+    )
+    return Response(content=content, media_type="application/xml")
+
+
 # Mount Static Frontend Build if present
 dist_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "frontend", "dist")
 if os.path.exists(dist_path):

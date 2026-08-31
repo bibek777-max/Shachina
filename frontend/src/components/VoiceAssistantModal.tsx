@@ -399,6 +399,9 @@ export const VoiceAssistantModal: React.FC<Props> = ({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
+  const [isSlowNetwork, setIsSlowNetwork] = useState(false);
+  const slowTimerRef = useRef<NodeJS.Timeout | null>(null);
+
   // ── Core send ─────────────────────────────────────────────────────────────
   const sendMessage = useCallback(async (text: string, isVoice = false) => {
     const t = text.trim();
@@ -410,9 +413,18 @@ export const VoiceAssistantModal: React.FC<Props> = ({
     setQuery('');
     setInterim('');
     setErrMsg(null);
+    setIsSlowNetwork(false);
 
     append('user', t, undefined, lang, isVoice);
     setState('thinking');
+
+    // Start slow connection timer (triggers message if >3.5s on mobile networks)
+    if (slowTimerRef.current) clearTimeout(slowTimerRef.current);
+    slowTimerRef.current = setTimeout(() => {
+      if (stateRef.current === 'thinking') {
+        setIsSlowNetwork(true);
+      }
+    }, 3500);
 
     try {
       const history = messagesRef.current.slice(-12).map(m => ({
@@ -421,6 +433,9 @@ export const VoiceAssistantModal: React.FC<Props> = ({
       }));
 
       const res = await api.askAssistant(t, selectedSymbol, selectedMarket, lang, history);
+
+      if (slowTimerRef.current) clearTimeout(slowTimerRef.current);
+      setIsSlowNetwork(false);
 
       if (abortRef.current) return;
 
@@ -437,15 +452,21 @@ export const VoiceAssistantModal: React.FC<Props> = ({
         );
       }
     } catch (err: any) {
+      if (slowTimerRef.current) clearTimeout(slowTimerRef.current);
+      setIsSlowNetwork(false);
       if (abortRef.current) return;
+
       setState('error');
-      const errText =
-        lang === 'ne' ? 'Shachina अहिले उपलब्ध भएन। कृपया पुनः प्रयास गर्नुहोस्।' :
-        lang === 'hi' ? 'Shachina अभी उपलब्ध नहीं है। कृपया पुनः प्रयास करें।' :
-        "Sorry, I couldn't complete that request. Please try again.";
+      const isNetError = !navigator.onLine || err?.message?.toLowerCase().includes('connection') || err?.message?.toLowerCase().includes('network') || err?.message?.toLowerCase().includes('fetch');
+      const errText = isNetError
+        ? (lang === 'ne' ? 'इन्टरनेट कनेक्सन कमजोर भयो। कृपया पुनः प्रयास गर्नुहोस्।' : 'Connection lost. Please try again.')
+        : (lang === 'ne' ? 'Shachina अहिले उपलब्ध भएन। कृपया पुनः प्रयास गर्नुहोस्।' :
+           lang === 'hi' ? 'Shachina अभी उपलब्ध नहीं है। कृपया पुनः प्रयास करें।' :
+           "Connection lost. Please try again.");
+
       append('shachina', errText, errText, lang);
       setErrMsg(errText);
-      setTimeout(() => { setState('idle'); setErrMsg(null); }, 5000);
+      setTimeout(() => { setState('idle'); setErrMsg(null); }, 6000);
     }
   }, [lang, muted, selectedSymbol, selectedMarket, append, stopSpeech]);
 
@@ -509,12 +530,13 @@ export const VoiceAssistantModal: React.FC<Props> = ({
         if (finalText.trim()) sendMessage(finalText, true);
       },
       (msg) => {
-        setErrMsg(msg);
+        const friendlyMsg = "I couldn't understand your voice. Please try again or type your message.";
+        setErrMsg(friendlyMsg);
         setInterim('');
         setAmplitude(0);
         voiceEngine.stopMicVisualiser();
         setState('error');
-        setTimeout(() => { setState('idle'); setErrMsg(null); }, 5000);
+        setTimeout(() => { setState('idle'); setErrMsg(null); }, 6000);
       },
       () => {
         setInterim('');
@@ -553,7 +575,7 @@ export const VoiceAssistantModal: React.FC<Props> = ({
   // Status label
   const statusLabel =
     state === 'listening' ? (interim ? `"${interim.slice(0, 60)}${interim.length > 60 ? '…' : ''}"` : 'Listening…') :
-    state === 'thinking'  ? 'Shachina is thinking…' :
+    state === 'thinking'  ? (isSlowNetwork ? 'Connection is slow. Please wait while Shachina responds...' : 'Shachina is thinking…') :
     state === 'speaking'  ? 'Shachina is speaking… (tap mic to interrupt)' :
     state === 'error'     ? (errMsg || 'Something went wrong.') :
     sttSupported          ? 'Tap 🎙️ to speak, or type below' :

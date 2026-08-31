@@ -35,6 +35,9 @@ export const App: React.FC = () => {
   const [isVoiceOpen, setIsVoiceOpen] = useState<boolean>(false);
   const [isProfileOpen, setIsProfileOpen] = useState<boolean>(false);
 
+  const [mobileTab, setMobileTab] = useState<'chart' | 'watchlist' | 'overview'>('chart');
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   // 1. Initial Session Check on App Startup
   useEffect(() => {
     const checkAuth = async () => {
@@ -64,46 +67,51 @@ export const App: React.FC = () => {
   }, []);
 
   // 2. Load Market Overview and Symbols when on Dashboard
+  const loadMarketInfo = async () => {
+    try {
+      setLoadError(null);
+      const [status, overview, syms] = await Promise.all([
+        api.getNepseStatus().catch(() => null),
+        api.getNepseSectors().catch(() => null),
+        api.getSymbols(activeMarket).catch(() => []),
+      ]);
+      if (status) setNepseStatus(status);
+      if (overview) setNepseOverview(overview);
+      if (syms.length > 0) {
+        setSymbols(syms);
+        if (!syms.some((s) => s.symbol === selectedSymbol)) {
+          setSelectedSymbol(syms[0].symbol);
+        }
+      }
+    } catch (err: any) {
+      console.error('Market loading error:', err);
+      setLoadError('Connection lost. Please try again.');
+    }
+  };
+
   useEffect(() => {
     if (screen !== 'dashboard') return;
-
-    const loadMarketInfo = async () => {
-      try {
-        const [status, overview, syms] = await Promise.all([
-          api.getNepseStatus().catch(() => null),
-          api.getNepseSectors().catch(() => null),
-          api.getSymbols(activeMarket).catch(() => []),
-        ]);
-        if (status) setNepseStatus(status);
-        if (overview) setNepseOverview(overview);
-        if (syms.length > 0) {
-          setSymbols(syms);
-          if (!syms.some((s) => s.symbol === selectedSymbol)) {
-            setSelectedSymbol(syms[0].symbol);
-          }
-        }
-      } catch (err) {
-        console.error('Market loading error:', err);
-      }
-    };
     loadMarketInfo();
   }, [screen, activeMarket]);
 
   // 3. Load OHLCV Candles when Symbol or Timeframe changes on Dashboard
+  const loadCandles = async () => {
+    if (!selectedSymbol) return;
+    setIsLoadingChart(true);
+    setLoadError(null);
+    try {
+      const data = await api.getOHLCV(activeMarket, selectedSymbol, timeframe, 80);
+      setOhlcvData(data);
+    } catch (err: any) {
+      console.error('Failed to load chart data:', err);
+      setLoadError('Connection lost. Please try again.');
+    } finally {
+      setIsLoadingChart(false);
+    }
+  };
+
   useEffect(() => {
     if (screen !== 'dashboard' || !selectedSymbol) return;
-
-    const loadCandles = async () => {
-      setIsLoadingChart(true);
-      try {
-        const data = await api.getOHLCV(activeMarket, selectedSymbol, timeframe, 80);
-        setOhlcvData(data);
-      } catch (err: any) {
-        console.error('Failed to load chart data:', err);
-      } finally {
-        setIsLoadingChart(false);
-      }
-    };
     loadCandles();
   }, [screen, activeMarket, selectedSymbol, timeframe]);
 
@@ -190,19 +198,71 @@ export const App: React.FC = () => {
         onOpenProfile={() => setIsProfileOpen(true)}
       />
 
+      {/* Network Alert / Retry Banner */}
+      {loadError && (
+        <div className="bg-rose-950/90 border-b border-rose-700 px-4 py-2 flex items-center justify-between text-xs text-rose-200 font-mono z-20 shrink-0">
+          <span>⚠️ {loadError}</span>
+          <button
+            onClick={() => { loadMarketInfo(); loadCandles(); }}
+            className="bg-rose-800 hover:bg-rose-700 text-white px-2.5 py-1 rounded text-[11px] font-bold"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* Mobile Tab Navigation (< lg screens) */}
+      <div className="lg:hidden flex border-b border-[#1c2438] bg-[#0c101c] shrink-0">
+        <button
+          onClick={() => setMobileTab('chart')}
+          className={`flex-1 py-2 text-xs font-mono font-bold text-center transition-all ${
+            mobileTab === 'chart'
+              ? 'text-cyan-400 border-b-2 border-cyan-400 bg-cyan-950/20'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          📈 Chart & Quant
+        </button>
+        <button
+          onClick={() => setMobileTab('watchlist')}
+          className={`flex-1 py-2 text-xs font-mono font-bold text-center transition-all ${
+            mobileTab === 'watchlist'
+              ? 'text-cyan-400 border-b-2 border-cyan-400 bg-cyan-950/20'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          📋 Watchlist
+        </button>
+        <button
+          onClick={() => setMobileTab('overview')}
+          className={`flex-1 py-2 text-xs font-mono font-bold text-center transition-all ${
+            mobileTab === 'overview'
+              ? 'text-cyan-400 border-b-2 border-cyan-400 bg-cyan-950/20'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          🇳🇵 Overview
+        </button>
+      </div>
+
       {/* Main Terminal Workspace */}
       <div className="flex-1 flex overflow-hidden">
         {/* Left Watchlist Sidebar */}
-        <WatchlistSidebar
-          activeMarket={activeMarket}
-          onSelectMarket={(m) => setActiveMarket(m)}
-          symbols={symbols}
-          selectedSymbol={selectedSymbol}
-          onSelectSymbol={(sym) => setSelectedSymbol(sym)}
-        />
+        <div className={`h-full ${mobileTab === 'watchlist' ? 'w-full flex' : 'hidden lg:flex'}`}>
+          <WatchlistSidebar
+            activeMarket={activeMarket}
+            onSelectMarket={(m) => setActiveMarket(m)}
+            symbols={symbols}
+            selectedSymbol={selectedSymbol}
+            onSelectSymbol={(sym) => {
+              setSelectedSymbol(sym);
+              setMobileTab('chart');
+            }}
+          />
+        </div>
 
         {/* Center Canvas (Chart + Data Health Panel) */}
-        <main className="flex-1 flex flex-col p-3 gap-3 overflow-hidden">
+        <main className={`flex-1 flex-col p-3 gap-3 overflow-hidden ${mobileTab === 'chart' ? 'flex' : 'hidden lg:flex'}`}>
           <FinancialChart
             symbol={selectedSymbol}
             currency={ohlcvData?.currency || (activeMarket === 'NEPSE' ? 'NPR' : 'USD')}
@@ -216,7 +276,9 @@ export const App: React.FC = () => {
         </main>
 
         {/* Right NEPSE / Global Summary */}
-        <NepseOverview nepseData={nepseOverview} />
+        <div className={`h-full ${mobileTab === 'overview' ? 'w-full flex' : 'hidden lg:flex'}`}>
+          <NepseOverview nepseData={nepseOverview} />
+        </div>
       </div>
 
       {/* Floating Voice Assistant Trigger */}
