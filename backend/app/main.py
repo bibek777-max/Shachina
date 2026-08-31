@@ -16,6 +16,7 @@ from backend.app.api.markets import router as markets_router
 from backend.app.api.user_data import router as user_data_router
 from backend.app.api.assistant import router as assistant_router
 from backend.app.api.websocket import router as ws_router
+from backend.app.api.signals import router as signals_router
 from shachina_quant.data.factory import MarketDataProviderRegistry
 
 
@@ -78,6 +79,7 @@ app.include_router(auth_router, prefix=settings.API_V1_PREFIX)
 app.include_router(markets_router, prefix=settings.API_V1_PREFIX)
 app.include_router(user_data_router, prefix=settings.API_V1_PREFIX)
 app.include_router(assistant_router, prefix=settings.API_V1_PREFIX)
+app.include_router(signals_router, prefix=settings.API_V1_PREFIX)
 app.include_router(ws_router)
 
 

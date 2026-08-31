@@ -21,6 +21,15 @@ export default {
       },
       fontFamily: {
         mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+      },
+      keyframes: {
+        shrink: {
+          '0%':   { width: '100%' },
+          '100%': { width: '0%' },
+        }
+      },
+      animation: {
+        'shrink': 'shrink 10s linear forwards',
       }
     },
   },

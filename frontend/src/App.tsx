@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Header } from './components/Header';
 import { WatchlistSidebar } from './components/WatchlistSidebar';
 import { FinancialChart } from './components/FinancialChart';
@@ -6,6 +6,8 @@ import { DataHealthPanel } from './components/DataHealthPanel';
 import { NepseOverview } from './components/NepseOverview';
 import { VoiceAssistantModal } from './components/VoiceAssistantModal';
 import { UserProfileModal } from './components/UserProfileModal';
+import { TradeAlertBanner } from './components/TradeAlertBanner';
+import { tradeAlertEngine, TradeSignal } from './services/tradeAlertEngine';
 
 import { AuthWelcome } from './components/auth/AuthWelcome';
 import { AuthRegister } from './components/auth/AuthRegister';
@@ -37,6 +39,10 @@ export const App: React.FC = () => {
 
   const [mobileTab, setMobileTab] = useState<'chart' | 'watchlist' | 'overview'>('chart');
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  // Trade Alert State
+  const [activeAlerts, setActiveAlerts] = useState<TradeSignal[]>([]);
+  const [alertsMuted, setAlertsMuted] = useState<boolean>(false);
 
   // 1. Initial Session Check on App Startup
   useEffect(() => {
@@ -93,6 +99,32 @@ export const App: React.FC = () => {
     if (screen !== 'dashboard') return;
     loadMarketInfo();
   }, [screen, activeMarket]);
+
+  // 3a. Start trade alert engine when on dashboard with symbols
+  useEffect(() => {
+    if (screen !== 'dashboard' || symbols.length === 0) return;
+
+    const handleAlert = (signal: TradeSignal) => {
+      setActiveAlerts(prev => {
+        const filtered = prev.filter(a => a.symbol !== signal.symbol);
+        return [signal, ...filtered].slice(0, 5);
+      });
+    };
+
+    tradeAlertEngine.onAlert(handleAlert);
+    tradeAlertEngine.isEnabled = !alertsMuted;
+    tradeAlertEngine.start(activeMarket, symbols.map(s => s.symbol));
+
+    return () => {
+      tradeAlertEngine.offAlert(handleAlert);
+      tradeAlertEngine.stop();
+    };
+  }, [screen, activeMarket, symbols]);
+
+  // Sync mute state with engine
+  useEffect(() => {
+    tradeAlertEngine.isEnabled = !alertsMuted;
+  }, [alertsMuted]);
 
   // 3. Load OHLCV Candles when Symbol or Timeframe changes on Dashboard
   const loadCandles = async () => {
@@ -291,6 +323,14 @@ export const App: React.FC = () => {
           <span className="font-mono text-xs tracking-wider">HEY SHACHINA</span>
         </button>
       </div>
+
+      {/* Trade Alert Banner — auto-speaks BUY/SELL signals */}
+      <TradeAlertBanner
+        alerts={activeAlerts}
+        isMuted={alertsMuted}
+        onMuteToggle={() => setAlertsMuted(m => !m)}
+        onDismiss={(sym) => setActiveAlerts(prev => prev.filter(a => a.symbol !== sym))}
+      />
 
       {/* Voice Assistant Modal */}
       <VoiceAssistantModal
