@@ -103,39 +103,29 @@ def _detect_symbol(msg_lower: str, history: List[Dict]) -> Optional[str]:
 def _classify_intent(msg_lower: str) -> str:
     """
     Classifies user intent into:
-      • 'TRADING_ANALYSIS'  — market analysis, chart scan, setups, S/R, patterns
-      • 'TRADE_EXECUTION'   — order confirmation or execution command
-      • 'GENERAL_AI'        — science, math, code, business, chat, writing
+      • 'TRADE_EXECUTION'        — explicit confirmation to place/execute an order
+      • 'EXPLICIT_TRADE_DECISION' — explicit requests for buy/sell setups ("Can I take trade?", "Should I buy?")
+      • 'GENERAL_CONVERSATION'    — market discussions, loss inquiries, global news, science, math, code, general chat
     """
     exec_keywords = [
         "take the trade", "place the trade", "place it", "confirm order",
-        "execute trade", "buy it now", "sell it now", "take this trade"
+        "execute trade", "buy it now", "sell it now"
     ]
     if any(k in msg_lower for k in exec_keywords):
         return "TRADE_EXECUTION"
 
-    trading_keywords = [
-        "market", "nepse", "chart", "analyze", "analysis", "setup", "candle",
-        "pattern", "support", "resistance", "rsi", "macd", "fibonacci", "stop loss",
-        "target", "risk reward", "bullish", "bearish", "breakout", "entry",
-        "market kasto cha", "market herna", "ke ramro cha", "stock", "trade", "buy", "sell",
-        # Liquidity & institutional keywords
-        "liquidity", "bsl", "ssl", "equal highs", "equal lows", "eqh", "eql",
-        "liquidity sweep", "stop hunt", "fvg", "fair value gap", "imbalance",
-        "bos", "choch", "break of structure", "change of character", "displacement",
-        "order block", "supply zone", "demand zone", "premium", "discount",
-        "swing high", "swing low", "higher high", "higher low", "lower high", "lower low",
-        "can i take", "should i buy", "should i sell", "is this a good trade",
-        "trend", "momentum", "volume", "overbought", "oversold", "retest", "rejection",
+    # Explicit requests asking Shachina to evaluate a trade setup
+    trade_decision_keywords = [
+        "can i take trade", "can i take this trade", "should i buy", "should i sell",
+        "trade setup dinus", "entry kaha garne", "trade linu thik", "give me setup",
+        "trade setup ready", "setup evaluate", "is this a good buy", "is this a good trade"
     ]
-    for sym in ALL_SYMBOLS:
-        if sym.lower() in msg_lower:
-            return "TRADING_ANALYSIS"
+    if any(k in msg_lower for k in trade_decision_keywords):
+        return "EXPLICIT_TRADE_DECISION"
 
-    if any(k in msg_lower for k in trading_keywords):
-        return "TRADING_ANALYSIS"
-
-    return "GENERAL_AI"
+    # Everything else (market loss discussions, why is it dropping, general knowledge, math, coding)
+    # is handled by the universal conversational AI
+    return "GENERAL_CONVERSATION"
 
 
 # ─── Master System Prompt ─────────────────────────────────────────────────────
@@ -397,18 +387,41 @@ def _general_ai_offline_response(msg: str, owner_name: str, language: str) -> tu
         )
         return resp, "Buy-side liquidity rests above swing highs, and Sell-side liquidity rests below swing lows."
 
-    # Fallback Conversational Response
-    resp = (
-        f"✨ **Shachina Assistant Response**\n\n"
-        f"Regarding your query on **\"{msg}\"**:\n\n"
-        f"1. **Clear Perspective**: Analyzing this requires evaluating both foundational principles and practical applications.\n"
-        f"2. **Actionable Takeaways**:\n"
-        f"   • Focus on structured logic, verified data, and continuous iteration.\n"
-        f"   • For coding or technical tasks: maintain modularity and clean abstractions.\n"
-        f"   • For financial decisions: apply strict risk controls and position sizing.\n\n"
-        f"Feel free to ask me to elaborate, write code, solve equations, or analyze market setups!"
-    )
-    return resp, f"Here is the breakdown for {msg}. Let me know if you would like me to delve deeper into any detail."
+    # Loss in NEPSE / Market Drop
+    if any(k in ml for k in ["loss vako", "loss bhayo", "loss vayo", "aaja loss", "loss recovery", "loss bho"]):
+        resp = (
+            f"📉 **NEPSE बजारमा घाटा (Loss) को विश्लेषण र समाधान, {owner_name}:**\n\n"
+            f"बजार घट्दा वा घाटा हुँदा निराश नहुनुहोस् — यो ट्रेडिङको एउटा स्वाभाविक हिस्सा हो। महत्वपूर्ण कुरा **पुँजी संरक्षण (Capital Protection)** र **अनुशासन** हो।\n\n"
+            f"**किन घाटा भयो? (Market Reasons):**\n"
+            f"1. **Profit Booking & Selling Pressure**: अघिल्ला दिनहरूको वृद्धिपछि लगानीकर्ताहरूले नाफा सुरक्षित गर्दा आपूर्ति बढ्यो।\n"
+            f"2. **Liquidity Sweep (Stop Hunt)**: ठूला खेलाडीहरूले Key Support भन्दा तल रहेका Stop Loss अर्डरहरू ट्रिगर गरे।\n"
+            f"3. **Volume Contraction**: खरिदकर्ताहरू पर्ख र हेर (Wait & Watch) को रणनीतिमा हुँदा माग कमजोर रह्यो।\n\n"
+            f"**अब के गर्ने? (Action Plan):**\n"
+            f"• 🚫 **Revenge Trading नगर्नुहोस्**: तुरुन्तै रिकभर गर्ने हतारमा अनावश्यक ट्रेड नलिनुहोस्।\n"
+            f"• 🛡️ **Stop Loss को कडा पालना**: आफ्नो अधिकतम जोखिम (1% rule) भन्दा बढी घाटा हुन नदिनुहोस्।\n"
+            f"• ⏳ **Confirmation को पर्खाइ**: Support लेभलमा बुलिश Reversal क्यान्डल (Hammer/Engulfing) र BOS नआएसम्म नयाँ इन्ट्री नलिनुहोस्।"
+        )
+        return resp, "Market pullbacks happen naturally. Focus on capital preservation, do not revenge trade, and wait for confirmation."
+
+    # Global Markets / Crypto / US Stocks
+    if any(k in ml for k in ["global market", "crypto", "bitcoin", "btc", "us stock", "global"]):
+        resp = (
+            f"🌐 **Global Markets & Crypto Macro Outlook:**\n\n"
+            f"• **US Equities (S&P 500 / Nasdaq)**: Global risk sentiment, Federal Reserve interest rate policy, and tech sector earnings provide the macro benchmark.\n"
+            f"• **Crypto (Bitcoin & Majors)**: BTC acts as high-beta global liquidity barometer. When global liquidity expands, institutional risk appetite increases.\n"
+            f"• **Correlation to NEPSE**: While NEPSE is primarily domestic (bank liquidity, NRB interest rates, fiscal policy), global liquidity trends influence foreign capital flows, remittance sentiment, and institutional risk tolerance."
+        )
+        return resp, "Global equities and crypto reflect macro liquidity sentiment, which indirectly influences emerging markets."
+
+    # Market Overview / Aaja Nepse
+    if any(k in ml for k in ["aaja nepse", "market kasto", "market review", "nepse overview", "kina ghateko"]):
+        resp = (
+            f"📊 **NEPSE बजारको वर्तमान अवस्था:**\n\n"
+            f"• **Market Structure**: बजार अहिले Key Support र Resistance को बीचमा सन्तुलन (Range/Consolidation) खोज्दैछ।\n"
+            f"• **Liquidity Zone**: Swing Highs माथि BSL र Swing Lows तल SSL अर्डरहरू केन्द्रित छन्।\n"
+            f"• **सुझाव**: बजारले स्पष्ट दिशा (Breakout वा Retest Confirmation) नदेखाएसम्म Trade Force नगर्नुहोस्।"
+        )
+        return resp, "NEPSE is currently consolidating near key liquidity zones. Wait for confirmed market structure."
 
 
 # ─── Main Assistant Chat Endpoint ─────────────────────────────────────────────
@@ -489,8 +502,8 @@ async def assistant_chat(
             resp_text = "Live market data unavailable to prepare order. Execution halted for security."
             speech_text = "Market data unavailable. Order execution halted."
 
-    # ── ROUTE B: TRADING ANALYSIS & PROGRAMMATIC CHART DRAWING ────────────────
-    elif intent == "TRADING_ANALYSIS":
+    # ── ROUTE B: EXPLICIT TRADE DECISION & EVALUATION ─────────────────────────
+    elif intent == "EXPLICIT_TRADE_DECISION":
         account_size = current_user.trading_settings.account_size if current_user.trading_settings else 1000000.0
         risk_pct = current_user.trading_settings.risk_percentage if current_user.trading_settings else 1.0
 
@@ -512,11 +525,25 @@ async def assistant_chat(
         resp_text = eval_result.beginner_explanation if analysis_mode == "beginner" else eval_result.pro_analysis
         speech_text = _clean_for_tts(resp_text)
 
-    # ── ROUTE C: GENERAL AI PERSONAL ASSISTANT ────────────────────────────────
+    # ── ROUTE C: UNIVERSAL CONVERSATIONAL AI (ANSWERS ALL USER QUESTIONS) ─────
     else:
         ltp = candles[-1].close if candles else 540.0
-        market_context = f"[ACTIVE MARKET]: {market} | Symbol: {symbol} | LTP: NPR {ltp:.2f}\n"
+        market_context = (
+            f"[LIVE MARKET DATA]: {market} | Symbol: {symbol} | LTP: NPR {ltp:.2f} | "
+            f"Global Markets: S&P 500, Nasdaq, BTC/USDT, ETH/USDT live active.\n"
+        )
         system_prompt = _build_system_prompt(owner_name, language, analysis_mode, market_context)
+
+        # Generate background chart annotations if symbol candles exist
+        try:
+            if candles:
+                eval_result = TradeSetupGenerator.evaluate_symbol(
+                    symbol=symbol, market=market, candles=candles, timeframe=timeframe
+                )
+                if eval_result.annotations:
+                    chart_annotations = eval_result.annotations.model_dump()
+        except Exception:
+            pass
 
         ai_res = await _call_gemini(system_prompt, req.history or [], msg, req.api_key)
         if not ai_res:
@@ -527,8 +554,8 @@ async def assistant_chat(
             resp_text = ai_res
             speech_text = _clean_for_tts(ai_res)
 
-    # ── If trading analysis response is short/unavailable, enrich with AI ────
-    if intent == "TRADING_ANALYSIS" and (not resp_text or len(resp_text) < 80):
+    # ── If trade decision response is short/unavailable, enrich with AI ────────
+    if intent == "EXPLICIT_TRADE_DECISION" and (not resp_text or len(resp_text) < 80):
         ltp = candles[-1].close if candles else 540.0
         market_context = (
             f"[LIVE DATA]: {market} | Symbol: {symbol} | LTP: NPR {ltp:.2f} | "
