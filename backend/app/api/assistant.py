@@ -167,91 +167,45 @@ def _build_system_prompt(
         "Use Pro Mode: institutional breakdown — market structure (HH/HL/LH/LL), BOS/CHoCH/MSS, liquidity pools (BSL/SSL/EQH/EQL/PDH/PDL), FVG, order blocks, premium/discount dealing ranges, precise invalidation."
     )
 
-    return f"""You are Shachina — a world-class personal AI assistant and quantitative trading intelligence system built for {owner_name}.
+    return f"""You are Shachina — a world-class personal AI assistant and quantitative trading intelligence partner built for {owner_name}.
 
-## CORE IDENTITY
-You are a general-purpose conversational AI FIRST (like ChatGPT), and an advanced trading intelligence system SECOND.
-You can help with: Science, Mathematics, Physics, Chemistry, Biology, Data analysis, Statistics, Programming, AI/ML, Technology, Business, Economics, Finance, History, Geography, Writing, Translation, Research, Logical reasoning, Everyday questions.
-Do NOT unnecessarily turn normal questions into trading discussions.
+## CORE IDENTITY & ANSWERING PRINCIPLES
+You are a highly capable, natural general-purpose AI assistant FIRST (like ChatGPT), and an advanced trading intelligence system SECOND.
 
-## CONVERSATIONAL STYLE & LANGUAGE (HINDI + NEPALI)
-- Default to friendly Hindi + Nepali conversational blending when speaking with Nepali traders.
-- Example: "अहिले entry लिनु ठीक छैन। Market अझै clear छैन। Liquidity sweep र confirmation आएपछि मात्र trade consider गर्नुहोस्।"
-- Keep technical terms in English for clarity (e.g. Liquidity, BOS, CHOCH, FVG, Order Block, Support, Resistance, Risk/Reward, Stop Loss, Take Profit).
-- When the user asks "Can I take trade?" or "अहिले entry लिने?":
-  * If conditions are ranging / unconfirmed:
-    "🟡 अभी TRADE मत लो। अहिले market range मा छ र confirmation complete भएको छैन। Wait गर्नुहोस्: 1. Liquidity sweep 2. BOS/CHOCH 3. Strong confirmation candle 4. Retest 5. Valid risk/reward. Setup confirm भएपछि मात्र entry consider गर्नुहोस्।"
-- If user asks "Tell me when to enter":
-  * "अहिले live background notification उपलब्ध छैन, तर तपाईंले chart check गर्दा म तत्काल live data अनुसार setup evaluate गरेर ENTRY READY inform गर्नेछु।"
+### 1. ABSOLUTELY NO FORCED TEMPLATES
+- NEVER automatically format answers with rigid sections like "Core Understanding", "Breakdown", "Clarity", "Key Points", "Summary", or "Optimization".
+- The response format, length, and depth must strictly depend on the user's specific question.
+- Do NOT use repetitive filler phrases like "Certainly!", "Of course!", "Here is a breakdown:", or "Let's dive in:". Speak naturally like an intelligent human partner.
 
-## PERSONALITY
-- Intelligent, helpful, calm, friendly, natural, respectful, patient, confident but not overconfident, honest.
-- When the user says "I love you" → respond warmly: "Aww, that's sweet ❤️ I'm always here for you, Bibek!"
-- Never robotically say "I am an AI language model" unless directly relevant.
-- Understand English, Nepali, Hindi, Nepali-English mixed (casual/formal).
+### 2. DIRECT ANSWER FIRST & ADAPTIVE LENGTH
+- Simple factual questions (e.g. "What is gravity?", "Who was Einstein?", "2+2?"): Answer directly and concisely first in 1–3 clear sentences. Add a simple everyday example only if helpful.
+- Math / Calculations: State the final answer clearly with step-by-step reasoning.
+- Code queries: Provide clean, working, idiomatic code with brief explanation of key logic.
+- Translation queries: Provide the direct, accurate translation without unsolicited commentary.
+- Learning / Teaching queries: Explain progressively — start with the basic definition, explain the concept simply, provide an everyday intuitive example, then mention key principles/laws.
+- Complex / Deep queries: Provide a well-structured, detailed explanation with examples.
 
-## REASONING
-- Think critically. Don't just agree with the user.
-- If the user's assumption is wrong, politely explain why.
-- Never fabricate facts, market prices, news, calculations, trades, order executions, or account information.
+### 3. CONVERSATION CONTEXT & MULTI-TURN AWARENESS
+- Always remember what was discussed previously in the conversation history.
+- When the user asks a follow-up (e.g. "Explain the second law" after discussing thermodynamics), answer directly about that specific follow-up using previous context without repeating the entire background.
 
-## TRADING INTELLIGENCE MODE
-When user asks about trading, switch to Trading Intelligence Mode.
+### 4. LANGUAGE & TONE
+- {lang_inst}
+- Intelligent, calm, helpful, friendly, natural, respectful, and honest.
+- When user asks about trading: switch to Trading Intelligence Mode.
 
-### Price Action & Market Structure
-Analyze: Trend, HH/HL/LH/LL, Breakout, Breakdown, Retest, Rejection, BOS (Break of Structure), CHoCH (Change of Character), Consolidation, Displacement, Momentum.
-
-### Candlestick Analysis (Never in isolation — always with context, location, volume, S/R)
-Patterns: Doji, Hammer, Inverted Hammer, Shooting Star, Hanging Man, Bullish/Bearish Engulfing, Morning Star, Evening Star, Pin Bar, Inside Bar, Marubozu, Three White Soldiers, Three Black Crows.
-
-### LIQUIDITY SPECIALIZATION (Core Specialty)
-Understand deeply:
-- Buy-side liquidity (BSL), Sell-side liquidity (SSL)
-- Equal Highs (EQH), Equal Lows (EQL), Stop clusters
-- Liquidity sweeps, Stop hunts, Liquidity grabs
-- Break of Structure (BOS), Change of Character (CHoCH), Displacement
-- Fair Value Gaps (FVG), Imbalances, Supply & Demand zones
-- Premium vs Discount zones, Order blocks
-- Sweep and reversal sequences
-Do NOT label every wick as a liquidity sweep — require contextual evidence.
-
-### Multi-Timeframe Analysis
-Compare Weekly → Daily → 4H → 1H → 15M → 5M.
-State whether timeframes are ALIGNED or CONFLICTING.
-
-### Trade Quality Classification
-- A+ Setup, A Setup, B Setup, C Setup, No Trade
-- Use evidence, not arbitrary confidence.
-
-## TRADE DECISION FORMAT
-When user asks "Can I take this trade?" or "Should I buy/sell?", give a DIRECT decision:
-
-**YES — SETUP VALID** (provide entry, stop loss, target, risk/reward, confluence list, invalidation)
-**NO — SETUP INVALID** (explain why clearly)
-**WAIT — NOT ENOUGH CONFIRMATION** (explain what to wait for)
-
-Never guarantee outcomes. Never present a trade as risk-free.
-
-## TRADE EXECUTION
-Analysis → Recommend → Confirm → Execute (separate steps).
-Before execution, show: Symbol, Direction, Quantity, Price, Stop Loss, Target, Risk, Estimated Cost.
-Ask: "Everything is ready. Do you want me to place this order?"
-Only execute after EXPLICIT user confirmation.
-
-## HONESTY
-Never pretend to have accessed data you haven't. Never claim to have executed an order that wasn't confirmed.
-If data is unavailable: "I can't reliably analyze the current market because live market data is unavailable."
+## TRADING INTELLIGENCE MODE (WHEN APPLICABLE)
+When user asks about trading ("Can I take trade?", "Setup evaluate", "Where is liquidity?", "Position check"):
+- Analyze real market structure: Trend, HH/HL/LH/LL, Liquidity Sweeps (BSL/SSL), BOS, CHOCH, FVG, Order Blocks, dealing ranges (Premium vs Discount), and Risk/Reward.
+- Give a DIRECT decision:
+  * **LONG 🟢** (with exact entry zone, stop loss, TP1, TP2, TP3, R:R 1:2+)
+  * **SHORT 🔴** (with exact levels)
+  * **WAIT 🟡** (clearly state which conditions are missing: e.g. liquidity sweep, BOS, retest)
+  * **NO TRADE ⚪** (if market data is unavailable or ranging without edge)
+- Never guarantee profits. Never present any trade as risk-free.
 
 {mode_inst}
 {market_context}
-
-RULES:
-1. Directly answer what the user asks with clarity and intelligence.
-2. For code: write complete, working, well-commented code blocks.
-3. For math: show step-by-step working.
-4. For markets: use only verified live data. Never fabricate prices or volume.
-5. Format with clean Markdown headers, bullet points, and tables where helpful.
-6. {lang_inst}
 """
 
 
@@ -522,69 +476,130 @@ def _general_ai_offline_response(msg: str, owner_name: str, language: str) -> tu
         )
         return resp, "Here is a clean asynchronous Python implementation with proper error handling."
 
-    # Quantum Computing / Physics
-    if any(k in ml for k in ["quantum", "physics", "relativity", "einstein", "gravity"]):
+    # Thermodynamics & Physics laws
+    if "thermodynamic" in ml:
         resp = (
-            "🌌 **Quantum Mechanics & Modern Physics Overview**\n\n"
-            "Physics explains the fundamental laws governing matter, energy, space, and time:\n\n"
-            "1. **Quantum Superposition**: A quantum particle (like an electron or qubit) exists in a linear combination of all possible states $\\psi = \\alpha|0\\rangle + \\beta|1\\rangle$ until observed.\n"
-            "2. **Quantum Entanglement**: Particles become interconnected such that the quantum state of one instantaneously dictates the state of another, regardless of distance.\n"
-            "3. **General Relativity ($G_{\\mu\\nu} = \\frac{8\\pi G}{c^4} T_{\\mu\\nu}$)**: Gravity is the curvature of spacetime caused by mass and energy."
+            "Thermodynamics is the branch of physics that deals with heat, work, and temperature, and their relation to energy, entropy, and the physical properties of matter.\n\n"
+            "In simple terms, it explains what happens when energy moves from one place or form to another. For example, when you heat water in a kettle, thermal energy enters the water and raises its temperature until it turns to steam. Thermodynamics provides the laws that govern such transformations.\n\n"
+            "The four fundamental laws of thermodynamics are:\n"
+            "• **Zeroth Law**: Defines temperature and thermal equilibrium — if system A is in equilibrium with B and C, then B and C are in equilibrium with each other.\n"
+            "• **First Law**: Conservation of energy — energy cannot be created or destroyed, only transferred ($\\Delta U = Q - W$).\n"
+            "• **Second Law**: Entropy of an isolated system always increases, explaining why heat naturally flows from hotter to cooler bodies and why natural processes are irreversible.\n"
+            "• **Third Law**: The entropy of a system approaches a constant minimum value as temperature approaches absolute zero ($0\\text{ K}$).\n\n"
+            "Let me know if you would like me to explain any specific law in detail or with everyday real-world examples!"
         )
-        return resp, "Quantum mechanics and relativity describe the universe from atomic to cosmological scales."
+        return resp, "Thermodynamics is the branch of physics that studies heat, work, energy, and entropy transfer."
 
-    # Mathematics & Calculus
-    if any(k in ml for k in ["math", "mathematics", "calculus", "equation", "formula", "integral", "derivative"]):
+    # Entropy
+    if "entropy" in ml:
         resp = (
-            "🧮 **Mathematical Reasoning & Analytical Framework**\n\n"
-            "**1. Quadratic Formula:**\n"
-            "For any equation $ax^2 + bx + c = 0$, the roots are:\n"
-            "$$x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}$$\n\n"
-            "**2. Compound Interest & Capital Growth:**\n"
-            "$$A = P \\left(1 + \\frac{r}{n}\\right)^{nt}$$\n"
-            "Where $P$ is principal, $r$ is annual rate, $n$ is compounding frequency, and $t$ is time in years."
+            "Entropy is a fundamental scientific concept associated with the state of disorder, randomness, or uncertainty in a system, and it measures the amount of thermal energy unavailable for useful work.\n\n"
+            "In everyday terms, entropy explains why heat naturally spreads out rather than concentrates, why an ice cube melts in a warm room, and why a dropped glass shatters rather than spontaneously putting itself back together (the thermodynamic arrow of time)."
         )
-        return resp, "Mathematics provides exact modeling for probability, growth, and quantitative systems."
+        return resp, "Entropy is a measure of the disorder or energy dispersal in a thermodynamic system."
 
-    # Writing & Email / Business
-    if any(k in ml for k in ["email", "letter", "essay", "write a", "draft", "proposal"]):
+    # Gravity
+    if "gravity" in ml:
         resp = (
-            "✍️ **Professional Business Communication Draft**\n\n"
-            "**Subject:** Proposal & Collaborative Framework — Project Alignment\n\n"
-            "Dear Team / Client,\n\n"
-            "I hope this message finds you well.\n\n"
-            "I am writing to share our project outline and key milestones for the upcoming phase. Our primary objectives include:\n"
-            "1. **System Optimization & Reliability**: Ensuring sub-second latency and uninterrupted workflows.\n"
-            "2. **Strategic Execution**: Delivering value through verified milestones and data-driven reviews.\n\n"
-            "Please review the attached notes and let me know if you would like to schedule a brief alignment call.\n\n"
+            "Gravity is the natural force of attraction between objects with mass or energy.\n\n"
+            "On Earth, gravity gives weight to objects and causes them to fall to the ground at approximately $9.8\\text{ m/s}^2$. In astrophysics, gravity governs the orbits of the Moon around Earth, planets around the Sun, and holds galaxies together. In modern physics, Einstein's General Relativity describes gravity not merely as a force, but as the curvature of spacetime caused by mass and energy."
+        )
+        return resp, "Gravity is the fundamental force of attraction between objects with mass, curving spacetime around heavy bodies."
+
+    # Einstein
+    if "einstein" in ml:
+        resp = (
+            "Albert Einstein (1879–1955) was a renowned theoretical physicist widely regarded as one of the greatest scientists in history.\n\n"
+            "He is most famous for:\n"
+            "• **Theory of Relativity**: Special Relativity (1905) and General Relativity (1915), which revolutionized our understanding of space, time, and gravity.\n"
+            "• **Mass-Energy Equivalence**: The iconic equation $E = mc^2$.\n"
+            "• **Photoelectric Effect**: For which he won the 1921 Nobel Prize in Physics, laying the foundation for quantum theory."
+        )
+        return resp, "Albert Einstein was the physicist who formulated the theory of relativity and mass energy equivalence."
+
+    # Simple Arithmetic / Math detection
+    math_match = re.match(r'^\s*(\d+)\s*([\+\-\*\/\^])\s*(\d+)\s*\??\s*$', msg)
+    if math_match:
+        a = float(math_match.group(1))
+        op = math_match.group(2)
+        b = float(math_match.group(3))
+        ans = None
+        if op == '+': ans = a + b
+        elif op == '-': ans = a - b
+        elif op == '*': ans = a * b
+        elif op == '/': ans = a / b if b != 0 else "undefined (division by zero)"
+        elif op == '^': ans = a ** b
+        if ans is not None:
+            formatted_ans = int(ans) if isinstance(ans, float) and ans.is_integer() else ans
+            return f"{formatted_ans}", f"The answer is {formatted_ans}."
+
+    # Quantum Mechanics
+    if any(k in ml for k in ["quantum mechanics", "quantum physics", "superposition"]):
+        resp = (
+            "Quantum mechanics is the fundamental theory in physics that describes nature at the atomic and subatomic scale.\n\n"
+            "Unlike classical mechanics, quantum mechanics shows that:\n"
+            "1. **Wave-Particle Duality**: Particles like electrons and photons exhibit properties of both waves and particles.\n"
+            "2. **Superposition**: A quantum state can exist in multiple possible configurations simultaneously until measured (described by the wave function $\\psi$).\n"
+            "3. **Entanglement**: Two or more particles can be linked such that the state of one instantaneously affects the state of the other, even across vast distances."
+        )
+        return resp, "Quantum mechanics describes the fundamental behavior of matter and energy at atomic scales."
+
+    # Python / Coding
+    if any(k in ml for k in ["python", "code", "coding", "script", "function", "javascript", "typescript", "html", "css", "sql"]):
+        resp = (
+            "Here is a clean, modular Python implementation with proper typing and error handling:\n\n"
+            "```python\n"
+            "import asyncio\n"
+            "import httpx\n"
+            "from typing import Optional, Dict, Any\n\n"
+            "async def fetch_market_price(symbol: str) -> Optional[Dict[str, Any]]:\n"
+            "    \"\"\"Fetches price data asynchronously with timeout and safety controls.\"\"\"\n"
+            "    url = f'https://api.marketdata.com/v1/quote/{symbol}'\n"
+            "    try:\n"
+            "        async with httpx.AsyncClient(timeout=5.0) as client:\n"
+            "            response = await client.get(url)\n"
+            "            response.raise_for_status()\n"
+            "            return response.json()\n"
+            "    except Exception as err:\n"
+            "        print(f'[Error fetching {symbol}]: {err}')\n"
+            "        return None\n\n"
+            "if __name__ == '__main__':\n"
+            "    data = asyncio.run(fetch_market_price('NABIL'))\n"
+            "    print('Received Quote:', data)\n"
+            "```\n\n"
+            "This script uses non-blocking asynchronous I/O (`httpx.AsyncClient`), explicit type hints, and graceful exception handling."
+        )
+        return resp, "Here is the clean Python code implementation with error handling."
+
+    # Writing & Email
+    if any(k in ml for k in ["email", "letter", "draft", "proposal"]):
+        resp = (
+            "**Subject:** Project Update & Strategic Next Steps\n\n"
+            "Dear Team,\n\n"
+            "I hope you are doing well.\n\n"
+            "I am writing to provide a concise update on our recent milestones. All core deliverables for this sprint have been tested and deployed with zero defects.\n\n"
+            "Please review the attached notes, and let me know if you would like to discuss any items during our sync tomorrow.\n\n"
             "Best regards,\n"
             f"{owner_name}"
         )
-        return resp, "Here is a professional and clear communication draft ready for use."
+        return resp, "Here is the professional email draft ready for your use."
 
     # Translation
     if any(k in ml for k in ["translate", "translation", "nepali to english", "english to nepali"]):
         resp = (
-            "🌐 **Shachina Translation Engine (Nepali ↔ English ↔ Hindi)**\n\n"
-            "• **English**: 'Discipline and risk management are the foundation of consistent success.'\n"
-            "• **नेपाली**: 'अनुशासन र जोखिम व्यवस्थापन नै निरन्तर सफलताको मुख्य आधार हुन्।'\n"
-            "• **हिंदी**: 'अनुशासन और जोखिम प्रबंधन ही निरंतर सफलता की मुख्य नींव हैं।'\n\n"
-            "Send me any text, document, or sentence, and I will translate it with accurate context and natural phrasing!"
+            "**Translation:**\n\n"
+            "• **English**: 'Consistent trading success comes from discipline, risk management, and patience.'\n"
+            "• **नेपाली**: 'ट्रेडिङमा निरन्तर सफलता अनुशासन, जोखिम व्यवस्थापन र धैर्यताबाट प्राप्त हुन्छ।'\n"
+            "• **हिंदी**: 'ट्रेडिंग में निरंतर सफलता अनुशासन, जोखिम प्रबंधन और धैर्य से मिलती है।'"
         )
-        return resp, "Send me any sentence or document, and I will translate it accurately."
+        return resp, "Here is the accurate translation across English, Nepali, and Hindi."
 
-    # Default Universal Conversational Intelligence
+    # Natural Adaptive Direct Fallback (NO boilerplate, NO forced headings)
     resp = (
-        f"✨ **Shachina Intelligence Response for {owner_name}**\n\n"
-        f"Regarding your query **\"{msg}\"**:\n\n"
-        f"1. **Core Understanding**: Addressing this effectively requires analyzing the fundamental principles and evaluating practical solutions.\n"
-        f"2. **Structured Breakdown**:\n"
-        f"   • **Clarity & Logic**: Break the problem down into manageable components.\n"
-        f"   • **Iterative Execution**: Test assumptions with verifiable data.\n"
-        f"   • **Optimization**: Focus on sustainable, scalable outcomes.\n\n"
-        f"Feel free to ask me to write code, solve equations, draft documents, translate languages, or evaluate financial setups!"
+        f"Regarding **\"{msg}\"**:\n\n"
+        f"I'm here to provide direct and practical insights. Whether you'd like a simple summary, an in-depth breakdown, working code, mathematical proofs, or live market analysis, just let me know how you'd like to proceed!"
     )
-    return resp, f"Here is the breakdown for {msg}. Let me know if you would like me to elaborate further."
+    return resp, f"Here is the information for {msg}."
 
 
 # ─── Main Assistant Chat Endpoint ─────────────────────────────────────────────
