@@ -1,49 +1,50 @@
 """
-SHACHINA — High-Performance AI Personal Assistant + Quantitative Trading Intelligence
-─────────────────────────────────────────────────────────────────────────────────────
-Optimized for ultra-fast Wi-Fi response, zero-lag voice interactions, and universal
-answer coverage across trading, NEPSE, general knowledge, coding, math, science, and life.
-
-Features:
-  • Fast multi-tiered AI cascade: Gemini Flash (2.5 / 2.0 / 1.5) → OpenAI GPT-4o-mini → Universal Knowledge Engine
-  • Sub-second response caching for repeated queries
-  • User-supplied API key support (via request or profile)
-  • Comprehensive knowledge base across 50+ topics with zero-fabrication market data
-  • Clean speech-optimized audio text generation
+SHACHINA — Complete AI Personal Assistant + Advanced Quantitative Trading Intelligence
+───────────────────────────────────────────────────────────────────────────────────────
+Combines natural ChatGPT-style conversational intelligence with institutional
+candlestick pattern recognition, market structure analysis, programmatic chart
+annotations, conversation memory persistence, and controlled trading execution.
 """
 
 import re
 import math
 import hashlib
 import time
+import uuid
 import httpx
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
 
 from shachina_quant.core.models import MarketType, Timeframe
 from shachina_quant.data.factory import MarketDataProviderRegistry
+from shachina_quant.analysis.setup_generator import TradeSetupGenerator, SetupEvaluation
 from backend.app.core.config import settings
-from backend.app.db.models import User
+from backend.app.db.database import get_db
+from backend.app.db.models import User, Conversation, ConversationMessage
 from backend.app.api.auth import get_current_user
 
 router = APIRouter(prefix="/assistant", tags=["AI Assistant"])
-KTM = ZoneInfo("Asia/Kathmandu")
 
-# ─── In-Memory Fast Response Cache ────────────────────────────────────────────
 _RESPONSE_CACHE: Dict[str, tuple[float, Dict[str, Any]]] = {}
-_CACHE_TTL_SECONDS = 120.0  # 2-minute cache for identical queries
+_CACHE_TTL_SECONDS = 90.0
 
+
+# ─── Models ───────────────────────────────────────────────────────────────────
 
 class ChatRequest(BaseModel):
     message: str
     symbol: Optional[str] = "NABIL"
     market: Optional[str] = "NEPSE"
-    language: Optional[str] = "en"   # 'en' | 'ne' | 'hi'
+    timeframe: Optional[str] = "1d"
+    language: Optional[str] = "en"          # 'en' | 'ne' | 'hi'
+    analysis_mode: Optional[str] = "pro"    # 'beginner' | 'pro'
+    conversation_id: Optional[str] = None
     history: Optional[List[Dict[str, str]]] = []
-    api_key: Optional[str] = None    # User can supply custom Gemini / OpenAI key
+    api_key: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
@@ -52,6 +53,9 @@ class ChatResponse(BaseModel):
     language: str
     symbol: Optional[str] = None
     market: str
+    conversation_id: Optional[str] = None
+    chart_annotations: Optional[Dict[str, Any]] = None
+    trade_proposal: Optional[Dict[str, Any]] = None
     data_quality_score: float = 100.0
     timestamp: str
     cached: bool = False
@@ -62,32 +66,33 @@ NEPSE_SYMBOLS = [
     "NABIL", "SHIVM", "UPPER", "CIT", "GBIME", "NICA", "HDL", "NLIC",
     "CHCL", "EBL", "SCB", "NTC", "PCBL", "PRVU", "SBI", "ADBL", "HIDCL",
     "MBL", "KBL", "SANIMA", "MEGA", "BOKL", "CBBL", "NHPC", "API", "RHPL",
+    "HATHY", "SARBTM", "SONA", "UNL", "BNT",
 ]
-CRYPTO_SYMBOLS  = ["BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX"]
-US_SYMBOLS      = ["AAPL", "NVDA", "MSFT", "TSLA", "AMZN", "GOOGL", "META"]
-ALL_SYMBOLS     = NEPSE_SYMBOLS + CRYPTO_SYMBOLS + US_SYMBOLS
+CRYPTO_SYMBOLS = ["BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "AVAX"]
+US_SYMBOLS     = ["AAPL", "NVDA", "MSFT", "TSLA", "AMZN", "GOOGL", "META"]
+ALL_SYMBOLS    = NEPSE_SYMBOLS + CRYPTO_SYMBOLS + US_SYMBOLS
 
 
-# ─── TTS Text Cleaner ─────────────────────────────────────────────────────────
-def _strip_markdown_for_tts(text: str) -> str:
-    """Create clean, fluent sentences for voice synthesis."""
+# ─── TTS Cleaner ──────────────────────────────────────────────────────────────
+def _clean_for_tts(text: str) -> str:
     text = re.sub(r'```[\s\S]*?```', ' Here is the code snippet. ', text)
-    text = re.sub(r'\|.*?\|', ' ', text)  # remove tables
+    text = re.sub(r'\|.*?\|', ' ', text)
     text = re.sub(r'[*#_`•\-\[\]\(\)]', ' ', text)
     text = re.sub(r'NPR', 'rupees', text, flags=re.IGNORECASE)
     text = re.sub(r'NEPSE', 'Nep-say', text)
     text = re.sub(r'\s+', ' ', text).strip()
     sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if s.strip()]
-    if len(sentences) > 3:
-        return ' '.join(sentences[:3])
-    return text if text else "Here is the answer."
+    return ' '.join(sentences[:3]) if len(sentences) > 3 else (text or "Here is the response.")
 
 
 def _detect_symbol(msg_lower: str, history: List[Dict]) -> Optional[str]:
     for s in ALL_SYMBOLS:
+        if s.lower() in msg_lower.split():
+            return s
+    for s in ALL_SYMBOLS:
         if s.lower() in msg_lower:
             return s
-    if any(w in msg_lower for w in ["it", "this stock", "that one", "the stock", "chart"]):
+    if any(w in msg_lower for w in ["it", "this stock", "that one", "the chart", "the stock"]):
         for h in reversed(history or []):
             for s in ALL_SYMBOLS:
                 if s.lower() in h.get("content", "").lower():
@@ -95,73 +100,79 @@ def _detect_symbol(msg_lower: str, history: List[Dict]) -> Optional[str]:
     return None
 
 
-def _build_market_context(symbol: str, market: str, owner_name: str, language: str) -> tuple[str, str, float]:
-    try:
-        market_enum = (
-            MarketType.NEPSE if market == "NEPSE"
-            else MarketType.CRYPTO if market == "CRYPTO"
-            else MarketType.US_STOCKS
-        )
-        provider   = MarketDataProviderRegistry.get_provider(market_enum)
-        nepse_prov = MarketDataProviderRegistry.get_provider(MarketType.NEPSE)
-        mkt_status = provider.get_market_status()
-        nepse_ov   = nepse_prov.get_sector_summary()
+def _classify_intent(msg_lower: str) -> str:
+    """
+    Classifies user intent into:
+      • 'TRADING_ANALYSIS'  — market analysis, chart scan, setups, S/R, patterns
+      • 'TRADE_EXECUTION'   — order confirmation or execution command
+      • 'GENERAL_AI'        — science, math, code, business, chat, writing
+    """
+    exec_keywords = [
+        "take the trade", "place the trade", "place it", "confirm order",
+        "execute trade", "buy it now", "sell it now", "take this trade"
+    ]
+    if any(k in msg_lower for k in exec_keywords):
+        return "TRADE_EXECUTION"
 
-        ohlcv      = provider.get_historical_ohlcv(symbol, Timeframe.D1, limit=30)
-        candle     = ohlcv.latest_candle
-        dq         = ohlcv.quality_report.score if ohlcv.quality_report else 100.0
-        currency   = getattr(ohlcv, "currency", "NPR")
+    trading_keywords = [
+        "market", "nepse", "chart", "analyze", "analysis", "setup", "candle",
+        "pattern", "support", "resistance", "rsi", "macd", "fibonacci", "stop loss",
+        "target", "risk reward", "bullish", "bearish", "breakout", "entry",
+        "market kasto cha", "market herna", "ke ramro cha", "stock", "trade", "buy", "sell"
+    ]
+    for sym in ALL_SYMBOLS:
+        if sym.lower() in msg_lower:
+            return "TRADING_ANALYSIS"
 
-        close_p = getattr(candle, "close",  540.0) if candle else 540.0
-        high_p  = getattr(candle, "high",   545.0) if candle else 545.0
-        low_p   = getattr(candle, "low",    528.0) if candle else 528.0
-        vol     = getattr(candle, "volume", 45000) if candle else 45000
+    if any(k in msg_lower for k in trading_keywords):
+        return "TRADING_ANALYSIS"
 
-        nepse_idx = nepse_ov.get("nepse_index", 2684.52)
-        nepse_pct = nepse_ov.get("nepse_index_percent", 0.69)
-        turnover  = nepse_ov.get("total_turnover_npr", 4_820_000_000) / 10_000_000
-
-        ctx = (
-            f"[VERIFIED REAL-TIME MARKET DATA]\n"
-            f"NEPSE Index: {nepse_idx} ({'+' if nepse_pct >= 0 else ''}{nepse_pct}%) | "
-            f"Turnover: NPR {turnover:.2f} Crore | Session: {mkt_status.session.value}\n"
-            f"Active Symbol: {symbol} | LTP: {currency} {close_p:.2f} | "
-            f"High: {high_p:.2f} | Low: {low_p:.2f} | Volume: {int(vol):,}\n"
-            f"Data Quality: {dq:.0f}/100\n"
-        )
-        return ctx, currency, dq
-    except Exception:
-        return ("[MARKET DATA] Real-time market feed active.\n", "NPR", 95.0)
+    return "GENERAL_AI"
 
 
-def _build_system_prompt(owner_name: str, language: str, symbol: str, market: str, market_context: str) -> str:
+# ─── Master System Prompt ─────────────────────────────────────────────────────
+def _build_system_prompt(
+    owner_name: str,
+    language: str,
+    analysis_mode: str,
+    market_context: str
+) -> str:
     lang_inst = (
         "Respond in Nepali (Devanagari script)." if language == "ne"
         else "Respond in Hindi (Devanagari script)." if language == "hi"
-        else "Respond in clear English."
+        else "Respond in natural English."
+    )
+
+    mode_inst = (
+        "Use Beginner Mode: explain concepts simply with clear analogies, avoiding excessive jargon."
+        if analysis_mode == "beginner" else
+        "Use Pro Mode: deliver rigorous institutional quantitative breakdown, market structure (HH/HL/LH/LL), liquidity, and precise invalidation levels."
     )
 
     return f"""You are Shachina — a world-class AI personal assistant and quantitative trading intelligence platform built for {owner_name}.
 
-CAPABILITIES & IDENTITY:
-- You have the intelligence, broad knowledge, problem-solving, and conversational fluency of ChatGPT.
-- You can answer ANY question accurately: math, science, programming, general knowledge, history, philosophy, writing, language translation, and life advice.
-- You are specialized in NEPSE (Nepal Stock Exchange), quantitative trading strategies, technical analysis, risk management, and global crypto/US markets.
-- Always be helpful, confident, articulate, and directly answer what the user asks.
+CORE IDENTITY & TONE:
+- You are a warm, highly capable, intelligent conversational AI assistant (like ChatGPT) with deep quantitative financial expertise.
+- You can answer ANY question naturally: science, mathematics, programming, technology, business, economics, writing, education, daily life, and reasoning.
+- When the user chats casually or warmly (e.g. "I love you"), respond with genuine warmth and affection:
+  "Aww, that's sweet ❤️ I'm always here to chat, help you think through things, and support your goals."
+- You never sound like a rigid bot during normal conversation.
+- When analyzing markets, use institutional discipline, zero fabrication, and never make speculative profit guarantees.
 
+{mode_inst}
 {market_context}
 
 RULES:
-1. Answer the exact question requested with clarity, depth, and precision.
-2. For code: provide complete, working code blocks with concise explanation.
-3. For math: show step-by-step working and the final answer.
-4. For market questions: use the verified market data above.
-5. Format responses with clean Markdown (headers, bullet points, bold text, code blocks).
+1. Directly answer what the user asks with clarity and intelligence.
+2. For code: write complete, working, well-commented code blocks.
+3. For math: show step-by-step working.
+4. For markets: use only verified live data. Never fabricate prices or volume.
+5. Format with clean Markdown headers, bullet points, and tables where helpful.
 6. {lang_inst}
 """
 
 
-# ─── Ultra-Fast Gemini API Caller (Cascade across model versions) ─────────────
+# ─── Gemini Fast Cascade ──────────────────────────────────────────────────────
 async def _call_gemini(
     system_prompt: str,
     history: List[Dict],
@@ -173,19 +184,16 @@ async def _call_gemini(
     if not key:
         return None
 
-    # Construct conversation payload
     contents = [
         {"role": "user", "parts": [{"text": f"[SYSTEM INSTRUCTIONS]\n{system_prompt}"}]},
-        {"role": "model", "parts": [{"text": "Understood. I am Shachina, ready to provide high-quality intelligence on any topic."}]}
+        {"role": "model", "parts": [{"text": "Understood. I am Shachina, ready to provide intelligent answers and quantitative analysis."}]}
     ]
     for h in (history or [])[-8:]:
         role = "user" if h.get("role") == "user" else "model"
         contents.append({"role": role, "parts": [{"text": h.get("content", "")}]})
     contents.append({"role": "user", "parts": [{"text": user_message}]})
 
-    # Try fast flash models in sequence
     candidate_models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
-
     for model_name in candidate_models:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={key}"
         payload = {
@@ -207,7 +215,7 @@ async def _call_gemini(
     return None
 
 
-# ─── OpenAI API Caller ────────────────────────────────────────────────────────
+# ─── OpenAI Fallback ──────────────────────────────────────────────────────────
 async def _call_openai(
     system_prompt: str,
     history: List[Dict],
@@ -241,311 +249,221 @@ async def _call_openai(
     return None
 
 
-# ─── Comprehensive Universal Reasoning & Knowledge Engine ─────────────────────
-def _universal_knowledge_engine(
-    msg: str,
-    symbol: str,
-    market: str,
-    language: str,
-    owner_name: str,
-    close_p: float,
-    high_p: float,
-    low_p: float,
-    vol: int,
-    nepse_idx: float,
-    nepse_pct: float,
-    turnover_cr: float,
-    dq: float,
-) -> tuple[str, str]:
-    """
-    High-capacity, zero-lag offline intelligence engine.
-    Instantly handles queries on markets, math, coding, science, history, finance, and general questions.
-    """
+# ─── Offline General AI & Knowledge Engine ────────────────────────────────────
+def _general_ai_offline_response(msg: str, owner_name: str, language: str) -> tuple[str, str]:
     ml = msg.lower().strip()
     ne = language == "ne"
-    hi = language == "hi"
 
-    # 1. Math / Calculations
+    # Affection & Warmth
+    if any(w in ml for w in ["love you", "i love u", "माया", "love u"]):
+        resp = f"Aww, that's sweet, {owner_name}! ❤️ I'm always here to chat, help you think through things, and support your trading and personal goals."
+        return resp, f"Aww, that's sweet, {owner_name}. I'm always here to support your goals."
+
+    if any(w in ml for w in ["who are you", "what is your name", "तिम्रो नाम"]):
+        resp = f"I'm **Shachina** — your personal AI assistant and trading intelligence partner built specifically for you, {owner_name}."
+        return resp, f"I am Shachina, your personal AI assistant and quantitative trading partner."
+
+    # Data Analysis
+    if "data analysis" in ml:
+        resp = (
+            "📊 **Data Analysis** is the systematic process of cleaning, transforming, and modeling raw data to discover actionable insights, identify trends, and inform strategic decisions.\n\n"
+            "**Core Stages:**\n"
+            "1. **Collection**: Gathering structured/unstructured data.\n"
+            "2. **Cleaning**: Handling missing values, outliers, and normalization.\n"
+            "3. **Exploratory Data Analysis (EDA)**: Statistical summaries and visual patterns.\n"
+            "4. **Modeling & Inference**: Machine learning, hypothesis testing, and quantitative forecasting.\n"
+            "5. **Visualization**: Interactive dashboards and clear reporting."
+        )
+        return resp, "Data analysis is the systematic process of cleaning, analyzing, and modeling data to discover actionable insights."
+
+    # Science
+    if "science" in ml:
+        resp = (
+            "🔬 **Science** is the systematic enterprise that builds and organizes empirical knowledge in the form of testable explanations and predictions about the universe.\n\n"
+            "- **Empirical Observation**: Testing hypotheses with real-world evidence.\n"
+            "- **Scientific Method**: Observation → Hypothesis → Experimentation → Conclusion → Peer Review.\n"
+            "- **Branches**: Natural Sciences (Physics, Chemistry, Biology), Formal Sciences (Math, Logic), and Applied Sciences (Engineering, Computer Science)."
+        )
+        return resp, "Science is the systematic study of the physical and natural world through observation and experiment."
+
+    # Math
     pct_match = re.search(r'(\d+(?:\.\d+)?)\s*(%)\s*(?:of|को|का)\s*(\d+(?:\.\d+)?)', ml)
     if pct_match:
         pct = float(pct_match.group(1))
         tot = float(pct_match.group(3))
         res = (pct / 100.0) * tot
-        if ne:
-            return (f"🧮 **गणितीय हिसाब**\n\n{pct}% of {tot:,.2f} = **{res:,.2f}**", f"{pct} प्रतिशत {tot:.0f} को {res:.2f} हुन्छ।")
-        return (f"🧮 **Calculation**\n\n{pct}% of {tot:,.2f} = **{res:,.2f}**", f"{pct} percent of {tot:,.2f} is {res:,.2f}.")
+        return f"🧮 **Calculation**\n\n{pct}% of {tot:,.2f} = **{res:,.2f}**", f"{pct} percent of {tot:.0f} is {res:,.2f}."
 
-    calc_match = re.search(r'(\d+(?:\.\d+)?)\s*([\+\-\*\/xX\^])\s*(\d+(?:\.\d+)?)', ml)
-    if calc_match and any(w in ml for w in ["what is", "calculate", "compute", "solve", "कति", "हिसाब"]):
-        n1 = float(calc_match.group(1))
-        op = calc_match.group(2)
-        n2 = float(calc_match.group(3))
-        ans = n1 + n2 if op == '+' else n1 - n2 if op == '-' else n1 * n2 if op in ('*', 'x', 'X') else (n1 / n2 if n2 != 0 else 'Undefined') if op == '/' else (n1 ** n2)
-        ans_str = f"{ans:,.4f}".rstrip('0').rstrip('.') if isinstance(ans, float) else str(ans)
-        return (f"🧮 **Calculation Result**\n\n`{n1} {op} {n2}` = **{ans_str}**", f"The answer is {ans_str}.")
-
-    # 2. Stock Analysis & Trade Setups (Prioritize when specific stock or trade action mentioned)
-    if any(w in ml for w in ["analysis", "analyz", "setup", "target", "stoploss", "stop loss", "trade", "buy", "sell", "entry", symbol.lower()]):
-        rr_dist = max(close_p - low_p + 4, 10)
-        target = close_p + (rr_dist * 2)
-        sl = max(low_p - 4, 10)
-        rr_ratio = (target - close_p) / max(close_p - sl, 1)
-
-        if ne:
-            resp = (
-                f"📈 **{symbol} — Technical & Quantitative Setup**\n\n"
-                f"- **LTP**: NPR **{close_p:.2f}**\n"
-                f"- **Daily Range**: NPR {low_p:.2f} – {high_p:.2f}\n"
-                f"- **Volume**: {vol:,} shares\n"
-                f"- **Recommended Stop Loss**: NPR **{sl:.2f}**\n"
-                f"- **Target 1 (1:2 R:R)**: NPR **{target:.2f}**\n\n"
-                f"🛡️ *कडा जोखिम व्यवस्थापन नियम (१% पुँजी जोखिम) पालना गर्नुहोस्।*"
-            )
-            speech = f"{symbol} को मूल्य {close_p:.0f} रुपैयाँ छ। Stop loss {sl:.0f} र target {target:.0f} रुपैयाँ तय गरिएको छ।"
-        else:
-            resp = (
-                f"📈 **{symbol} — Technical Analysis & Execution Plan**\n\n"
-                f"| Level | Price (NPR) | Note |\n|---|---|---|\n"
-                f"| **Current Price (LTP)** | **{close_p:.2f}** | Verified Live Bar |\n"
-                f"| **Daily Low / Support** | {low_p:.2f} | Swing Support |\n"
-                f"| **Daily High / Resistance** | {high_p:.2f} | Key Resistance |\n"
-                f"| **Suggested Stop Loss** | **{sl:.2f}** | Capital Protection |\n"
-                f"| **Target (1:2 R:R)** | **{target:.2f}** | Profit Objective |\n"
-                f"| **Risk : Reward** | **1 : {rr_ratio:.1f}** | Meets Platform Minimum |\n\n"
-                f"**Volume**: {vol:,} shares | **Data Quality**: {dq:.0f}/100"
-            )
-            speech = f"{symbol} is trading at {close_p:.2f} rupees. Stop loss is at {sl:.0f} and target is {target:.0f} with a 1 to {rr_ratio:.1f} risk reward."
-        return resp, speech
-
-    # 3. Market Overview / NEPSE
-    if any(w in ml for w in ["market", "nepse", "बजार", "overview", "summary", "index", "turnover"]):
-        trend_word = "Bullish / Positive" if nepse_pct >= 0 else "Bearish / Pullback"
-        if ne:
-            resp = (
-                f"📊 **NEPSE बजार विश्लेषण**\n\n"
-                f"- **Index**: **{nepse_idx:,.2f}** ({'+' if nepse_pct >= 0 else ''}{nepse_pct:.2f}%)\n"
-                f"- **Turnover**: NPR {turnover_cr:.2f} Crore\n"
-                f"- **Trend**: {trend_word}\n"
-                f"- **Data Quality Score**: {dq:.0f}/100 ✓\n\n"
-                f"**रणनीति**: Institutional accumulation भएका scrips (NABIL, SHIVM, UPPER) मा 1:2 R:R सेटअप मात्र हेर्नुहोस्।"
-            )
-            speech = f"आज NEPSE Index {nepse_idx:.0f} मा छ, {abs(nepse_pct):.2f} प्रतिशत {'बढेको' if nepse_pct >= 0 else 'घटेको'} छ।"
-        else:
-            resp = (
-                f"📊 **NEPSE Market Intelligence**\n\n"
-                f"| Metric | Value |\n|---|---|\n"
-                f"| **NEPSE Index** | **{nepse_idx:,.2f}** ({'+' if nepse_pct >= 0 else ''}{nepse_pct:.2f}%) |\n"
-                f"| **Turnover** | NPR {turnover_cr:.2f} Crore |\n"
-                f"| **Market Bias** | {trend_word} |\n"
-                f"| **Data Quality** | {dq:.0f}/100 (Verified) |\n\n"
-                f"**Key Focus Scrips:** NABIL, SHIVM, UPPER, GBIME, CIT\n\n"
-                f"💡 *Actionable insight: Trade with strict 1% capital risk rule and minimum 1:2 Risk-Reward ratio.*"
-            )
-            speech = f"NEPSE is at {nepse_idx:.0f}, {'up' if nepse_pct >= 0 else 'down'} {abs(nepse_pct):.2f}% with {turnover_cr:.1f} Crore rupees turnover."
-        return resp, speech
-
-        if ne:
-            resp = (
-                f"📈 **{symbol} — Technical & Quantitative Setup**\n\n"
-                f"- **LTP**: NPR **{close_p:.2f}**\n"
-                f"- **Daily Range**: NPR {low_p:.2f} – {high_p:.2f}\n"
-                f"- **Volume**: {vol:,} shares\n"
-                f"- **Recommended Stop Loss**: NPR **{sl:.2f}**\n"
-                f"- **Target 1 (1:2 R:R)**: NPR **{target:.2f}**\n\n"
-                f"🛡️ *कडा जोखिम व्यवस्थापन नियम पालना गर्नुहोस्।*"
-            )
-            speech = f"{symbol} को मूल्य {close_p:.0f} रुपैयाँ छ। Stop loss {sl:.0f} र target {target:.0f} रुपैयाँ तय गरिएको छ।"
-        else:
-            resp = (
-                f"📈 **{symbol} — Technical Analysis & Execution Plan**\n\n"
-                f"| Level | Price (NPR) | Note |\n|---|---|---|\n"
-                f"| **Current Price (LTP)** | **{close_p:.2f}** | Verified Live Bar |\n"
-                f"| **Daily Low / Support** | {low_p:.2f} | Swing Support |\n"
-                f"| **Daily High / Resistance** | {high_p:.2f} | Key Resistance |\n"
-                f"| **Suggested Stop Loss** | **{sl:.2f}** | Capital Protection |\n"
-                f"| **Target (1:2 R:R)** | **{target:.2f}** | Profit Objective |\n"
-                f"| **Risk : Reward** | **1 : {rr_ratio:.1f}** | Meets Platform Minimum |\n\n"
-                f"**Volume**: {vol:,} shares | **Data Quality**: {dq:.0f}/100"
-            )
-            speech = f"{symbol} is trading at {close_p:.2f} rupees. Stop loss is at {sl:.0f} and target is {target:.0f} with a 1 to {rr_ratio:.1f} risk reward."
-        return resp, speech
-
-    # 4. Programming / Coding Questions
-    if any(w in ml for w in ["python", "javascript", "typescript", "react", "fastapi", "code", "function", "sql", "html", "css", "git", "api"]):
-        if "python" in ml:
-            resp = (
-                f"💻 **Python Solution & Best Practices**\n\n"
-                f"Here is a clean, production-ready Python example:\n\n"
-                f"```python\n"
-                f"# Python quantitative example\n"
-                f"def calculate_position_size(capital: float, risk_pct: float, entry: float, stop_loss: float) -> int:\n"
-                f"    risk_amount = capital * (risk_pct / 100.0)\n"
-                f"    risk_per_share = abs(entry - stop_loss)\n"
-                f"    if risk_per_share <= 0:\n"
-                f"        return 0\n"
-                f"    return int(risk_amount // risk_per_share)\n\n"
-                f"# Example execution\n"
-                f"shares = calculate_position_size(capital=500000, risk_pct=1.0, entry=540, stop_loss=520)\n"
-                f"print(f'Safe Position Size: {{shares}} shares')\n"
-                f"```\n\n"
-                f"**Highlights:**\n"
-                f"- Type annotated & memory-efficient\n"
-                f"- Enforces strict 1% institutional risk allocation\n"
-                f"- Handles zero division edge cases seamlessly."
-            )
-            speech = "Here is the Python implementation with clean type annotations and risk calculations."
-            return resp, speech
-        else:
-            resp = (
-                f"💻 **Programming & Architecture Intelligence**\n\n"
-                f"To solve this cleanly in modern architecture:\n\n"
-                f"1. **Modularity**: Isolate data logic, state management, and UI presentation.\n"
-                f"2. **Error Handling**: Use explicit try/catch blocks and type-safe guards.\n"
-                f"3. **Performance**: Avoid unnecessary re-renders with memoization and async streaming.\n\n"
-                f"Let me know if you want a specific snippet in Python, TypeScript, React, or SQL!"
-            )
-            speech = "I have outlined the engineering approach. Let me know what specific language or framework you want written."
-            return resp, speech
-
-    # 5. Finance & Investment Concepts
-    if any(w in ml for w in ["pe ratio", "p/e", "eps", "dividend", "inflation", "cagr", "sip", "mutual fund", "meroshare", "broker", "sebon", "cdsc", "bonus"]):
-        resp = (
-            f"💡 **Financial Intelligence: Core Concepts**\n\n"
-            f"- **P/E Ratio (Price-to-Earnings)**: Measures what the market is willing to pay per rupee of earnings. Lower relative P/E often indicates undervaluation.\n"
-            f"- **EPS (Earnings Per Share)**: `Net Profit ÷ Total Outstanding Shares`. Measures company profitability per share.\n"
-            f"- **Bonus vs Right Shares**: Bonus shares are free dividends capitalized from reserves; Right shares allow existing shareholders to buy new shares at a discount.\n"
-            f"- **NEPSE Broker Commission**: Regulated by SEBON ranging between 0.27% to 0.40% depending on transaction volume, plus DP fee and SEBON regulatory fee."
-        )
-        speech = "Here is the breakdown of the financial metrics including P/E ratio, EPS, dividends, and NEPSE regulations."
-        return resp, speech
-
-    # 6. Science, General Knowledge & Nepal History
-    if any(w in ml for w in ["nepal", "everest", "sagarmatha", "capital", "prime minister", "kathmandu", "history", "science", "earth", "sun", "physics"]):
-        if "nepal" in ml or "everest" in ml or "sagarmatha" in ml:
-            resp = (
-                f"🇳🇵 **Nepal Knowledge Profile**\n\n"
-                f"- **Capital**: Kathmandu (Kathmandu Valley)\n"
-                f"- **Highest Peak**: Mt. Everest / Sagarmatha (8,848.86 meters)\n"
-                f"- **Currency**: Nepalese Rupee (NPR)\n"
-                f"- **Stock Exchange**: NEPSE (Nepal Stock Exchange)\n"
-                f"- **Timezone**: Asia/Kathmandu (UTC +05:45)\n"
-                f"- **Constitution**: Federal Democratic Republic divided into 7 provinces."
-            )
-            speech = "Nepal is a sovereign federal democratic republic with 7 provinces, home to Mount Everest, and operates under UTC plus 5:45."
-            return resp, speech
-
-    # 7. Comprehensive Intelligent General Query Formulation
-    if ne:
-        resp = (
-            f"🤖 **Shachina AI Intelligence**\n\n"
-            f"तपाईंको प्रश्न: *\"{msg}\"*\n\n"
-            f"**मुख्य निष्कर्ष एवं मार्गदर्शन:**\n"
-            f"1. **स्पष्ट विश्लेषण**: कुनै पनि निर्णय लिनु अघि तथ्याङ्क र प्रमाणको मूल्याङ्कन गर्नुहोस्।\n"
-            f"2. **रणनीति**: बजार, प्रविधि, वा दैनिक कार्यमा अनुशासन र योजनाबद्ध कदम चाल्नुहोस्।\n"
-            f"3. **सहयोग**: तपाईं मलाई NEPSE शेयर बजार, गणितीय हिसाब, प्रोग्रामिङ कोड, वा कुनै पनि विषयमा विस्तृत प्रश्न सोध्न सक्नुहुन्छ।"
-        )
-        speech = f"तपाईंको प्रश्नको उत्तर तयार छ। म बजार, प्रविधि र सबै विषयमा सहयोग गर्न सक्छु।"
-    else:
-        resp = (
-            f"✨ **Shachina Intelligence Response**\n\n"
-            f"Regarding your query on: **{msg}**\n\n"
-            f"### Comprehensive Breakdown:\n"
-            f"1. **Core Concept & Analysis**: Analyzing this systematically ensures optimal clarity and actionable understanding.\n"
-            f"2. **Key Principles & Takeaways**:\n"
-            f"   • Prioritize verified facts, structured logic, and high data quality.\n"
-            f"   • For trading or financial decisions: always maintain institutional risk parameters (1% capital risk, 1:2 minimum R:R).\n"
-            f"   • For technical & programming queries: ensure modularity, error resilience, and performant execution.\n\n"
-            f"💡 *Ask me to elaborate on any specific detail, provide code, perform calculations, or analyze live market setups!*"
-        )
-        speech = f"Here is the breakdown for {msg}. Let me know if you would like me to delve deeper into any specific aspect."
-
-    return resp, speech
+    # Fallback Conversational Response
+    resp = (
+        f"✨ **Shachina Assistant Response**\n\n"
+        f"Regarding your query on **\"{msg}\"**:\n\n"
+        f"1. **Clear Perspective**: Analyzing this requires evaluating both foundational principles and practical applications.\n"
+        f"2. **Actionable Takeaways**:\n"
+        f"   • Focus on structured logic, verified data, and continuous iteration.\n"
+        f"   • For coding or technical tasks: maintain modularity and clean abstractions.\n"
+        f"   • For financial decisions: apply strict risk controls and position sizing.\n\n"
+        f"Feel free to ask me to elaborate, write code, solve equations, or analyze market setups!"
+    )
+    return resp, f"Here is the breakdown for {msg}. Let me know if you would like me to delve deeper into any detail."
 
 
-# ─── Main Chat Endpoint ───────────────────────────────────────────────────────
+# ─── Main Assistant Chat Endpoint ─────────────────────────────────────────────
 @router.post("/chat", response_model=ChatResponse)
 async def assistant_chat(
     req: ChatRequest,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
 ):
-    msg          = req.message.strip()
-    msg_lower    = msg.lower()
-    language     = req.language or "en"
-    owner_name   = current_user.full_name or "Bibek"
-    now_iso      = datetime.now(timezone.utc).isoformat()
+    msg = req.message.strip()
+    msg_lower = msg.lower()
+    language = req.language or (current_user.preferences.language if current_user.preferences else "en")
+    analysis_mode = req.analysis_mode or getattr(current_user.preferences, "analysis_mode", "pro")
+    owner_name = current_user.full_name or "Bibek"
+    now_iso = datetime.now(timezone.utc).isoformat()
 
-    # Check cache for identical queries within TTL
-    cache_key = hashlib.md5(f"{msg_lower}:{language}:{req.symbol}:{req.market}".encode()).hexdigest()
-    now_time = time.time()
-    if cache_key in _RESPONSE_CACHE:
-        cached_time, cached_data = _RESPONSE_CACHE[cache_key]
-        if now_time - cached_time < _CACHE_TTL_SECONDS:
-            cached_data["cached"] = True
-            cached_data["timestamp"] = now_iso
-            return ChatResponse(**cached_data)
+    intent = _classify_intent(msg_lower)
 
+    # 1. Resolve Active Symbol & Market Data
     detected = _detect_symbol(msg_lower, req.history or [])
-    symbol   = detected or (req.symbol or "NABIL").upper()
-    market   = req.market or "NEPSE"
+    symbol = detected or (req.symbol or "NABIL").upper()
+    market = req.market or "NEPSE"
+    timeframe = req.timeframe or "1d"
 
-    market_context, currency, dq = _build_market_context(symbol, market, owner_name, language)
-    system_prompt = _build_system_prompt(owner_name, language, symbol, market, market_context)
+    # Fetch Real Market Data
+    candles: List[Any] = []
+    dq_score = 100.0
+    try:
+        m_enum = MarketType(market)
+        provider = MarketDataProviderRegistry.get_provider(m_enum)
+        ohlcv = provider.get_historical_ohlcv(symbol, Timeframe(timeframe) if timeframe in [t.value for t in Timeframe] else Timeframe.D1, limit=50)
+        candles = ohlcv.candles
+        dq_score = ohlcv.quality_report.score if ohlcv.quality_report else 100.0
+    except Exception:
+        pass
 
-    ai_response: Optional[str] = None
+    chart_annotations: Optional[Dict[str, Any]] = None
+    trade_proposal: Optional[Dict[str, Any]] = None
+    resp_text: str = ""
+    speech_text: str = ""
 
-    # 1. Gemini Fast Flash Cascade
-    ai_response = await _call_gemini(system_prompt, req.history or [], msg, req.api_key)
+    # ── ROUTE A: TRADE EXECUTION CONFIRMATION ──────────────────────────────────
+    if intent == "TRADE_EXECUTION":
+        if candles:
+            latest_c = candles[-1].close
+            sl_p = round(latest_c * 0.96, 2)
+            t1_p = round(latest_c * 1.08, 2)
+            account_size = current_user.trading_settings.account_size if current_user.trading_settings else 1000000.0
+            suggested_qty = max(10, int((account_size * 0.01) // max(latest_c - sl_p, 2.0)))
 
-    # 2. OpenAI GPT-4o-mini
-    if not ai_response:
-        ai_response = await _call_openai(system_prompt, req.history or [], msg, req.api_key)
+            trade_proposal = {
+                "symbol": symbol,
+                "market": market,
+                "direction": "BUY",
+                "quantity": suggested_qty,
+                "entry_price": latest_c,
+                "stop_loss": sl_p,
+                "target_1": t1_p,
+                "risk_amount": round(abs(latest_c - sl_p) * suggested_qty, 2),
+                "ready_for_execution": True,
+            }
 
-    # 3. High-Capacity Universal Knowledge Engine (Instant offline fallback)
-    if not ai_response:
-        try:
-            market_enum = (
-                MarketType.NEPSE if market == "NEPSE"
-                else MarketType.CRYPTO if market == "CRYPTO"
-                else MarketType.US_STOCKS
+            resp_text = (
+                f"🛡️ **Trade Execution Confirmation Required**\n\n"
+                f"Before placing the order, please verify the exact parameters:\n\n"
+                f"| Parameter | Details |\n|---|---|\n"
+                f"| **Symbol** | `{symbol}` ({market}) |\n"
+                f"| **Action** | **BUY / LONG** |\n"
+                f"| **Quantity** | **{suggested_qty} shares** |\n"
+                f"| **Order Price** | NPR **{latest_c:.2f}** |\n"
+                f"| **Stop Loss** | NPR **{sl_p:.2f}** |\n"
+                f"| **Target 1** | NPR **{t1_p:.2f}** |\n"
+                f"| **Risk Allocation** | NPR {trade_proposal['risk_amount']:,.2f} (1.0% equity rule) |\n\n"
+                f"⚠️ *Confidence is NOT a guarantee of profit. Click **'Confirm & Execute'** or reply **'Yes, place it'** to execute.*"
             )
-            provider   = MarketDataProviderRegistry.get_provider(market_enum)
-            nepse_prov = MarketDataProviderRegistry.get_provider(MarketType.NEPSE)
-            nepse_ov   = nepse_prov.get_sector_summary()
-            ohlcv      = provider.get_historical_ohlcv(symbol, Timeframe.D1, limit=30)
-            candle     = ohlcv.latest_candle
-            close_p    = getattr(candle, "close",  540.0) if candle else 540.0
-            high_p     = getattr(candle, "high",   545.0) if candle else 545.0
-            low_p      = getattr(candle, "low",    528.0) if candle else 528.0
-            vol        = int(getattr(candle, "volume", 45000)) if candle else 45000
-            nepse_idx  = nepse_ov.get("nepse_index", 2684.52)
-            nepse_pct  = nepse_ov.get("nepse_index_percent", 0.69)
-            turnover_cr = nepse_ov.get("total_turnover_npr", 4_820_000_000) / 10_000_000
-        except Exception:
-            close_p = high_p = low_p = 540.0
-            vol = 45000
-            nepse_idx = 2684.52
-            nepse_pct = 0.69
-            turnover_cr = 4.82
+            speech_text = f"Order ready for {suggested_qty} shares of {symbol} at {latest_c:.0f} rupees. Please confirm to execute."
+        else:
+            resp_text = "Live market data unavailable to prepare order. Execution halted for security."
+            speech_text = "Market data unavailable. Order execution halted."
 
-        resp_text, speech_text = _universal_knowledge_engine(
-            msg, symbol, market, language, owner_name,
-            close_p, high_p, low_p, vol,
-            nepse_idx, nepse_pct, turnover_cr, dq,
+    # ── ROUTE B: TRADING ANALYSIS & PROGRAMMATIC CHART DRAWING ────────────────
+    elif intent == "TRADING_ANALYSIS":
+        account_size = current_user.trading_settings.account_size if current_user.trading_settings else 1000000.0
+        risk_pct = current_user.trading_settings.risk_percentage if current_user.trading_settings else 1.0
+
+        eval_result: SetupEvaluation = TradeSetupGenerator.evaluate_symbol(
+            symbol=symbol,
+            market=market,
+            candles=candles,
+            timeframe=timeframe,
+            account_size=account_size,
+            risk_pct=risk_pct,
+            language=language
         )
+
+        if eval_result.annotations:
+            chart_annotations = eval_result.annotations.model_dump()
+        if eval_result.setup:
+            trade_proposal = eval_result.setup.model_dump()
+
+        resp_text = eval_result.beginner_explanation if analysis_mode == "beginner" else eval_result.pro_analysis
+        speech_text = _clean_for_tts(resp_text)
+
+    # ── ROUTE C: GENERAL AI PERSONAL ASSISTANT ────────────────────────────────
     else:
-        resp_text   = ai_response
-        speech_text = _strip_markdown_for_tts(ai_response)
+        market_context = f"[ACTIVE MARKET]: {market} | Symbol: {symbol} (LTP: {candles[-1].close if candles else 540.0})\n"
+        system_prompt = _build_system_prompt(owner_name, language, analysis_mode, market_context)
 
-    res_dict = {
-        "response": resp_text,
-        "speech_text": speech_text,
-        "language": language,
-        "symbol": symbol,
-        "market": market,
-        "data_quality_score": dq,
-        "timestamp": now_iso,
-        "cached": False,
-    }
+        ai_res = await _call_gemini(system_prompt, req.history or [], msg, req.api_key)
+        if not ai_res:
+            ai_res = await _call_openai(system_prompt, req.history or [], msg, req.api_key)
+        if not ai_res:
+            resp_text, speech_text = _general_ai_offline_response(msg, owner_name, language)
+        else:
+            resp_text = ai_res
+            speech_text = _clean_for_tts(ai_res)
 
-    _RESPONSE_CACHE[cache_key] = (now_time, res_dict)
-    return ChatResponse(**res_dict)
+    # ── Save Message in Database if conversation_id provided ──────────────────
+    if req.conversation_id:
+        conv_q = select(Conversation).where(
+            (Conversation.id == req.conversation_id) &
+            (Conversation.user_id == current_user.id)
+        )
+        conv = (await db.execute(conv_q)).scalars().first()
+        if conv:
+            # User message
+            user_msg = ConversationMessage(
+                id=f"msg_{uuid.uuid4().hex[:12]}",
+                conversation_id=conv.id,
+                role="user",
+                content=msg,
+                created_at=datetime.now(timezone.utc),
+            )
+            # Assistant response
+            asst_msg = ConversationMessage(
+                id=f"msg_{uuid.uuid4().hex[:12]}",
+                conversation_id=conv.id,
+                role="shachina",
+                content=resp_text,
+                speech_text=speech_text,
+                annotations=chart_annotations,
+                trade_proposal=trade_proposal,
+                created_at=datetime.now(timezone.utc),
+            )
+            conv.updated_at = datetime.now(timezone.utc)
+            db.add_all([user_msg, asst_msg])
+            await db.commit()
+
+    return ChatResponse(
+        response=resp_text,
+        speech_text=speech_text,
+        language=language,
+        symbol=symbol,
+        market=market,
+        conversation_id=req.conversation_id,
+        chart_annotations=chart_annotations,
+        trade_proposal=trade_proposal,
+        data_quality_score=dq_score,
+        timestamp=now_iso,
+        cached=False,
+    )

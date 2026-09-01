@@ -18,6 +18,8 @@ from backend.app.api.user_data import router as user_data_router
 from backend.app.api.assistant import router as assistant_router
 from backend.app.api.websocket import router as ws_router
 from backend.app.api.signals import router as signals_router
+from backend.app.api.conversations import router as conversations_router
+from backend.app.api.trading import router as trading_router
 from shachina_quant.data.factory import MarketDataProviderRegistry
 
 
@@ -27,6 +29,16 @@ async def lifespan(app: FastAPI):
     try:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            # Safe schema migrations for existing databases
+            for col_sql in [
+                "ALTER TABLE user_preferences ADD COLUMN analysis_mode VARCHAR(16) DEFAULT 'pro'",
+                "ALTER TABLE user_trading_settings ADD COLUMN emergency_stop_enabled BOOLEAN DEFAULT 0",
+            ]:
+                try:
+                    from sqlalchemy import text
+                    await conn.execute(text(col_sql))
+                except Exception:
+                    pass  # Column already exists
         
         async with AsyncSessionLocal() as session:
             await seed_bibek_user(session)
@@ -82,6 +94,8 @@ app.include_router(markets_router, prefix=settings.API_V1_PREFIX)
 app.include_router(user_data_router, prefix=settings.API_V1_PREFIX)
 app.include_router(assistant_router, prefix=settings.API_V1_PREFIX)
 app.include_router(signals_router, prefix=settings.API_V1_PREFIX)
+app.include_router(conversations_router, prefix=settings.API_V1_PREFIX)
+app.include_router(trading_router, prefix=settings.API_V1_PREFIX)
 app.include_router(ws_router)
 
 

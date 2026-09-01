@@ -64,10 +64,145 @@ export interface OHLCVResponse {
   last_updated: string;
 }
 
+export interface UserPreferences {
+  primary_market: string;
+  supported_markets: string[];
+  language: string;
+  dark_mode: boolean;
+  chart_style: string;
+  analysis_mode: 'beginner' | 'pro';
+  onboarded: boolean;
+}
+
+export interface UserTradingSettings {
+  account_size: number;
+  currency: string;
+  risk_percentage: number;
+  max_daily_loss: number;
+  min_risk_reward: number;
+  emergency_stop_enabled: boolean;
+}
+
 export interface User {
   id: number;
   username: string;
   email: string;
   full_name: string;
   role: string;
+  analysis_mode?: 'beginner' | 'pro';
+  preferences?: UserPreferences;
+  trading_settings?: UserTradingSettings;
+}
+
+// ─── Shachina Chart Drawing Annotations ──────────────────────────────────────
+
+export interface ChartAnnotationLine {
+  price: number;
+  label: string;
+  color?: string;
+}
+
+export interface ChartZone {
+  top: number;
+  bottom: number;
+  type: 'BREAKOUT' | 'SUPPLY' | 'DEMAND' | 'LIQUIDITY';
+  label: string;
+}
+
+export interface ChartPatternBadge {
+  candle_index: number;
+  pattern: string;
+  direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  price: number;
+}
+
+export interface ChartAnnotations {
+  symbol: string;
+  timeframe: string;
+  support_lines?: ChartAnnotationLine[];
+  resistance_lines?: ChartAnnotationLine[];
+  entry_line?: ChartAnnotationLine;
+  stop_loss_line?: ChartAnnotationLine;
+  target_lines?: ChartAnnotationLine[];
+  zones?: ChartZone[];
+  patterns?: ChartPatternBadge[];
+  fibonacci_levels?: Array<{ ratio: number; price: number; label: string }>;
+}
+
+export interface TradeProposal {
+  symbol: string;
+  market: string;
+  direction: 'BUY' | 'SELL';
+  market_structure?: string;
+  entry_price: number;
+  entry_zone?: string;
+  stop_loss: number;
+  target_1: number;
+  target_2?: number;
+  target_3?: number;
+  risk_reward?: string;
+  confidence?: string;
+  confidence_score?: number;
+  estimated_risk_npr?: number;
+  suggested_shares?: number;
+  quantity?: number;
+  risk_amount?: number;
+  reasons?: string[];
+  warning?: string;
+  ready_for_execution?: boolean;
+}
+
+// ─── Trading Positions & Orders ──────────────────────────────────────────────
+
+export interface TradingPosition {
+  id: string;
+  symbol: string;
+  market: string;
+  direction: 'LONG' | 'SHORT';
+  quantity: number;
+  entry_price: number;
+  current_price: number;
+  stop_loss?: number;
+  target?: number;
+  unrealized_pnl: number;
+  unrealized_pnl_pct: number;
+  status: 'OPEN' | 'CLOSED';
+  opened_at: string;
+}
+
+export interface TradeOrder {
+  id: string;
+  symbol: string;
+  market: string;
+  order_type: 'BUY' | 'SELL';
+  quantity: number;
+  price: number;
+  stop_loss?: number;
+  target?: number;
+  status: string;
+  execution_mode: 'LIVE_BROKER' | 'PAPER' | 'REJECTED';
+  risk_amount: number;
+  created_at: string;
+}
+
+// ─── Conversation Memory ──────────────────────────────────────────────────────
+
+export interface ConversationMessage {
+  id: string;
+  role: 'user' | 'shachina';
+  content: string;
+  speech_text?: string;
+  annotations?: ChartAnnotations;
+  trade_proposal?: TradeProposal;
+  created_at: string;
+}
+
+export interface Conversation {
+  id: string;
+  title: string;
+  message_count?: number;
+  last_preview?: string;
+  created_at: string;
+  updated_at?: string;
+  messages?: ConversationMessage[];
 }

@@ -1,11 +1,21 @@
-import { MarketType, Timeframe, MarketStatus, SymbolInfo, OHLCVResponse, User } from '../types';
+import {
+  MarketType,
+  Timeframe,
+  MarketStatus,
+  SymbolInfo,
+  OHLCVResponse,
+  User,
+  Conversation,
+  TradingPosition,
+  TradeOrder,
+} from '../types';
 
 const API_BASE = '/api/v1';
 
 async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 25000): Promise<Response> {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
-  
+
   try {
     const response = await fetch(url, {
       ...options,
@@ -44,29 +54,7 @@ export const api = {
     return token ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
   },
 
-  // Auth Endpoints
-  async register(data: {
-    full_name: string;
-    username: string;
-    email: string;
-    phone_number?: string;
-    password: string;
-    confirm_password: string;
-  }) {
-    const res = await fetchWithTimeout(`${API_BASE}/auth/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: 'Registration failed' }));
-      throw new Error(err.detail || 'Registration failed');
-    }
-    const json = await res.json();
-    if (json.access_token) this.setToken(json.access_token);
-    return json;
-  },
-
+  // ── Auth Endpoints ─────────────────────────────────────────────────────────
   async login(username_or_email: string, password: string) {
     const res = await fetchWithTimeout(`${API_BASE}/auth/login`, {
       method: 'POST',
@@ -74,8 +62,8 @@ export const api = {
       body: JSON.stringify({ username_or_email, password }),
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: 'Invalid credentials' }));
-      throw new Error(err.detail || 'Invalid credentials');
+      const err = await res.json().catch(() => ({ detail: 'Invalid username or password.' }));
+      throw new Error(err.detail || 'Invalid username or password.');
     }
     const json = await res.json();
     if (json.access_token) this.setToken(json.access_token);
@@ -104,7 +92,7 @@ export const api = {
     return res.json();
   },
 
-  async getMyProfile() {
+  async getMyProfile(): Promise<User> {
     const res = await fetchWithTimeout(`${API_BASE}/auth/me`, {
       headers: this.getAuthHeaders(),
     });
@@ -130,15 +118,6 @@ export const api = {
     return res.json();
   },
 
-  async updateVoiceSettings(data: any) {
-    const res = await fetchWithTimeout(`${API_BASE}/auth/voice-settings`, {
-      method: 'PUT',
-      headers: this.getAuthHeaders(),
-      body: JSON.stringify(data),
-    });
-    return res.json();
-  },
-
   async logout() {
     try {
       await fetch(`${API_BASE}/auth/logout`, {
@@ -149,7 +128,7 @@ export const api = {
     this.clearToken();
   },
 
-  // Market Endpoints
+  // ── Market Endpoints ───────────────────────────────────────────────────────
   async getMarketStatuses(): Promise<MarketStatus[]> {
     const res = await fetchWithTimeout(`${API_BASE}/markets/all-statuses`);
     if (!res.ok) throw new Error('Failed to fetch market statuses');
@@ -183,7 +162,7 @@ export const api = {
     return res.json();
   },
 
-  // User Watchlist
+  // ── User Watchlist ─────────────────────────────────────────────────────────
   async getUserWatchlist(): Promise<any[]> {
     const res = await fetchWithTimeout(`${API_BASE}/user/watchlist`, {
       headers: this.getAuthHeaders(),
@@ -209,23 +188,148 @@ export const api = {
     return res.json();
   },
 
-  // AI Voice Assistant with Multi-Turn Conversation History
-  async askAssistant(
-    message: string,
-    symbol: string = 'NABIL',
-    market: string = 'NEPSE',
-    language: string = 'en',
-    history: Array<{ role: string; content: string }> = []
-  ) {
+  // ── AI Personal Assistant ──────────────────────────────────────────────────
+  async askAssistant(payload: {
+    message: string;
+    symbol?: string;
+    market?: string;
+    timeframe?: string;
+    language?: string;
+    analysis_mode?: 'beginner' | 'pro';
+    conversation_id?: string;
+    history?: Array<{ role: string; content: string }>;
+  }) {
     const res = await fetchWithTimeout(`${API_BASE}/assistant/chat`, {
       method: 'POST',
       headers: this.getAuthHeaders(),
-      body: JSON.stringify({ message, symbol, market, language, history }),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: 'Assistant failed' }));
+      const err = await res.json().catch(() => ({ detail: 'Assistant error' }));
       throw new Error(err.detail || 'Assistant error');
     }
+    return res.json();
+  },
+
+  // ── Conversation Memory ────────────────────────────────────────────────────
+  async getConversations(): Promise<Conversation[]> {
+    const res = await fetchWithTimeout(`${API_BASE}/conversations`, {
+      headers: this.getAuthHeaders(),
+    });
+    if (!res.ok) return [];
+    return res.json();
+  },
+
+  async createConversation(title: string = 'New Conversation'): Promise<Conversation> {
+    const res = await fetchWithTimeout(`${API_BASE}/conversations`, {
+      method: 'POST',
+      headers: this.getAuthHeaders(),
+      body: JSON.stringify({ title }),
+    });
+    if (!res.ok) throw new Error('Failed to create conversation');
+    return res.json();
+  },
+
+  async getConversation(id: string): Promise<Conversation> {
+    const res = await fetchWithTimeout(`${API_BASE}/conversations/${id}`, {
+      headers: this.getAuthHeaders(),
+    });
+    if (!res.ok) throw new Error('Failed to fetch conversation');
+    return res.json();
+  },
+
+  async renameConversation(id: string, title: string) {
+    const res = await fetchWithTimeout(`${API_BASE}/conversations/${id}`, {
+      method: 'PATCH',
+      headers: this.getAuthHeaders(),
+      body: JSON.stringify({ title }),
+    });
+    return res.json();
+  },
+
+  async deleteConversation(id: string) {
+    const res = await fetchWithTimeout(`${API_BASE}/conversations/${id}`, {
+      method: 'DELETE',
+      headers: this.getAuthHeaders(),
+    });
+    return res.json();
+  },
+
+  async searchConversations(q: string) {
+    const res = await fetchWithTimeout(`${API_BASE}/conversations/search?q=${encodeURIComponent(q)}`, {
+      headers: this.getAuthHeaders(),
+    });
+    if (!res.ok) return [];
+    return res.json();
+  },
+
+  // ── Controlled Trading & Positions ─────────────────────────────────────────
+  async getTradingPositions(): Promise<TradingPosition[]> {
+    const res = await fetchWithTimeout(`${API_BASE}/trading/positions`, {
+      headers: this.getAuthHeaders(),
+    });
+    if (!res.ok) return [];
+    return res.json();
+  },
+
+  async getTradingOrders(): Promise<TradeOrder[]> {
+    const res = await fetchWithTimeout(`${API_BASE}/trading/orders`, {
+      headers: this.getAuthHeaders(),
+    });
+    if (!res.ok) return [];
+    return res.json();
+  },
+
+  async placeOrder(payload: {
+    symbol: string;
+    market?: string;
+    order_type?: string;
+    quantity: number;
+    price: number;
+    stop_loss?: number;
+    target?: number;
+    confirmed: boolean;
+  }) {
+    const res = await fetchWithTimeout(`${API_BASE}/trading/order`, {
+      method: 'POST',
+      headers: this.getAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Order execution failed' }));
+      throw new Error(err.detail || 'Order execution failed');
+    }
+    return res.json();
+  },
+
+  async modifyPosition(position_id: string, stop_loss?: number, target?: number) {
+    const res = await fetchWithTimeout(`${API_BASE}/trading/modify-position`, {
+      method: 'POST',
+      headers: this.getAuthHeaders(),
+      body: JSON.stringify({ position_id, stop_loss, target }),
+    });
+    return res.json();
+  },
+
+  async closePosition(position_id: string, exit_price?: number, confirmed: boolean = true) {
+    const res = await fetchWithTimeout(`${API_BASE}/trading/close-position`, {
+      method: 'POST',
+      headers: this.getAuthHeaders(),
+      body: JSON.stringify({ position_id, exit_price, confirmed }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Failed to close position' }));
+      throw new Error(err.detail || 'Failed to close position');
+    }
+    return res.json();
+  },
+
+  async toggleEmergencyStop(enabled: boolean) {
+    const res = await fetchWithTimeout(`${API_BASE}/trading/emergency-stop`, {
+      method: 'POST',
+      headers: this.getAuthHeaders(),
+      body: JSON.stringify({ enabled }),
+    });
     return res.json();
   },
 };

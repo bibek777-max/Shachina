@@ -1,6 +1,7 @@
 """
 SHACHINA DATABASE MODELS
-Institutional-grade relational schemas for User Management, Isolation, Security, and Settings.
+Institutional-grade relational schemas for User Management, Isolation, Security,
+Conversation Memory, Trading Execution, and Audit Logging.
 """
 
 from datetime import datetime, timezone
@@ -38,6 +39,10 @@ class User(Base):
     paper_trades = relationship("UserPaperTrade", back_populates="user", cascade="all, delete-orphan")
     portfolios = relationship("UserPortfolio", back_populates="user", cascade="all, delete-orphan")
     memories = relationship("UserMemory", back_populates="user", cascade="all, delete-orphan")
+    conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
+    orders = relationship("TradeOrder", back_populates="user", cascade="all, delete-orphan")
+    positions = relationship("TradingPosition", back_populates="user", cascade="all, delete-orphan")
+    audit_logs = relationship("TradeAuditLog", back_populates="user", cascade="all, delete-orphan")
 
 
 class UserProfile(Base):
@@ -65,6 +70,7 @@ class UserPreferences(Base):
     language = Column(String(16), default="ne")  # 'ne', 'en', 'hi'
     dark_mode = Column(Boolean, default=True)
     chart_style = Column(String(32), default="candlestick")
+    analysis_mode = Column(String(16), default="pro")  # 'beginner', 'pro'
     onboarded = Column(Boolean, default=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
@@ -99,6 +105,7 @@ class UserTradingSettings(Base):
     max_daily_loss = Column(Float, default=3.0)  # 3% max daily loss
     min_risk_reward = Column(Float, default=2.0)  # 1:2 R:R minimum
     max_open_positions = Column(Integer, default=5)
+    emergency_stop_enabled = Column(Boolean, default=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
@@ -203,6 +210,95 @@ class UserMemory(Base):
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     user = relationship("User", back_populates="memories")
+
+
+# ─── Multi-Conversation Memory Models ─────────────────────────────────────────
+
+class Conversation(Base):
+    __tablename__ = "conversations"
+
+    id = Column(String(64), primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    title = Column(String(256), nullable=False, default="New Conversation")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    user = relationship("User", back_populates="conversations")
+    messages = relationship("ConversationMessage", back_populates="conversation", cascade="all, delete-orphan", order_by="ConversationMessage.created_at")
+
+
+class ConversationMessage(Base):
+    __tablename__ = "conversation_messages"
+
+    id = Column(String(64), primary_key=True, index=True)
+    conversation_id = Column(String(64), ForeignKey("conversations.id", ondelete="CASCADE"), index=True, nullable=False)
+    role = Column(String(16), nullable=False)  # 'user' | 'shachina'
+    content = Column(Text, nullable=False)
+    speech_text = Column(Text, nullable=True)
+    annotations = Column(JSON, nullable=True)       # Programmatic chart drawing annotations
+    trade_proposal = Column(JSON, nullable=True)    # Structured trade proposal card
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    conversation = relationship("Conversation", back_populates="messages")
+
+
+# ─── Controlled Trading Execution Models ──────────────────────────────────────
+
+class TradeOrder(Base):
+    __tablename__ = "trade_orders"
+
+    id = Column(String(64), primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    symbol = Column(String(32), index=True, nullable=False)
+    market = Column(String(32), default="NEPSE", nullable=False)
+    order_type = Column(String(16), nullable=False)  # 'BUY' | 'SELL'
+    quantity = Column(Float, nullable=False)
+    price = Column(Float, nullable=False)
+    stop_loss = Column(Float, nullable=True)
+    target = Column(Float, nullable=True)
+    status = Column(String(32), default="FILLED")  # 'FILLED', 'REJECTED', 'CANCELLED', 'PENDING'
+    execution_mode = Column(String(32), default="PAPER")  # 'LIVE_BROKER' | 'PAPER'
+    risk_amount = Column(Float, default=0.0)
+    broker_order_id = Column(String(128), nullable=True)
+    rejection_reason = Column(String(256), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    user = relationship("User", back_populates="orders")
+
+
+class TradingPosition(Base):
+    __tablename__ = "trading_positions"
+
+    id = Column(String(64), primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    symbol = Column(String(32), index=True, nullable=False)
+    market = Column(String(32), default="NEPSE", nullable=False)
+    direction = Column(String(16), default="LONG", nullable=False)  # 'LONG' | 'SHORT'
+    quantity = Column(Float, nullable=False)
+    entry_price = Column(Float, nullable=False)
+    current_price = Column(Float, nullable=False)
+    stop_loss = Column(Float, nullable=True)
+    target = Column(Float, nullable=True)
+    unrealized_pnl = Column(Float, default=0.0)
+    realized_pnl = Column(Float, default=0.0)
+    status = Column(String(16), default="OPEN")  # 'OPEN' | 'CLOSED'
+    opened_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    closed_at = Column(DateTime, nullable=True)
+
+    user = relationship("User", back_populates="positions")
+
+
+class TradeAuditLog(Base):
+    __tablename__ = "trade_audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    action = Column(String(64), nullable=False)  # 'ORDER_PROPOSED', 'ORDER_EXECUTED', 'ORDER_REJECTED', 'POSITION_CLOSED', 'EMERGENCY_STOP'
+    details = Column(JSON, nullable=True)
+    ip_address = Column(String(64), nullable=True)
+    timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    user = relationship("User", back_populates="audit_logs")
 
 
 class SignalAudit(Base):
