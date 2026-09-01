@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   X, Mic, MicOff, Volume2, VolumeX, Send, Loader2, Sparkles, Plus,
-  MessageSquare, Search, Trash2, CheckCircle, Activity,
+  MessageSquare, Search, Trash2, CheckCircle, Activity, Copy, Check,
+  Download, Code, HelpCircle, TrendingUp, Cpu
 } from 'lucide-react';
 import { voiceEngine } from '../services/voiceEngine';
 import { api } from '../services/api';
@@ -17,6 +18,166 @@ interface ShachinaAssistantPanelProps {
   isEmbedded?: boolean;
 }
 
+// ─── Code Block Renderer with One-Click Copy ──────────────────────────────────
+const CodeBlock: React.FC<{ code: string; language?: string }> = ({ code, language }) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="my-2 rounded-xl overflow-hidden border border-[#22304e] bg-[#050812] font-mono text-[11px]">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-[#0b1222] border-b border-[#1c2944] text-[10px] text-slate-400">
+        <span className="flex items-center gap-1 text-cyan-400 font-bold uppercase tracking-wider">
+          <Code className="w-3 h-3" /> {language || 'code'}
+        </span>
+        <button
+          onClick={handleCopy}
+          className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#16233b] hover:bg-cyan-950 text-slate-300 hover:text-cyan-300 transition-colors"
+        >
+          {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+          <span>{copied ? 'Copied!' : 'Copy'}</span>
+        </button>
+      </div>
+      <pre className="p-3 overflow-x-auto text-cyan-100 font-mono text-[11px] leading-relaxed">
+        <code>{code}</code>
+      </pre>
+    </div>
+  );
+};
+
+// ─── Markdown Content Parser (Code blocks, tables, bold, lists) ──────────────
+const FormattedMessage: React.FC<{ content: string }> = ({ content }) => {
+  // Split by code blocks ```lang ... ```
+  const parts: React.ReactNode[] = [];
+  const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = codeBlockRegex.exec(content)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(renderTextAndTables(content.substring(lastIndex, match.index), `txt_${lastIndex}`));
+    }
+    const lang = match[1] || 'code';
+    const code = match[2];
+    parts.push(<CodeBlock key={`code_${match.index}`} language={lang} code={code} />);
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < content.length) {
+    parts.push(renderTextAndTables(content.substring(lastIndex), `txt_${lastIndex}`));
+  }
+
+  return <div className="space-y-1">{parts}</div>;
+};
+
+// Render tables and standard formatted text
+function renderTextAndTables(text: string, keyPrefix: string): React.ReactNode {
+  const lines = text.split('\n');
+  const elements: React.ReactNode[] = [];
+  let tableRows: string[] = [];
+  let inTable = false;
+
+  const flushTable = (idx: number) => {
+    if (tableRows.length > 0) {
+      elements.push(
+        <div key={`${keyPrefix}_tbl_${idx}`} className="my-2 overflow-x-auto rounded-lg border border-[#1e2a44] bg-[#070b16]">
+          <table className="min-w-full text-[10px] text-left">
+            <tbody>
+              {tableRows.map((row, rIdx) => {
+                const cols = row.split('|').filter((_, cIdx, arr) => cIdx > 0 && cIdx < arr.length - 1);
+                const isHeader = rIdx === 0;
+                const isSeparator = row.includes('---');
+                if (isSeparator) return null;
+                return (
+                  <tr key={rIdx} className={isHeader ? 'bg-[#0f172a] text-cyan-300 font-bold border-b border-[#1e2a44]' : 'border-b border-[#162035] hover:bg-[#0c1324]'}>
+                    {cols.map((col, cIdx) => (
+                      <td key={cIdx} className="px-2.5 py-1.5">
+                        {renderInlineFormatting(col.trim())}
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      );
+      tableRows = [];
+    }
+  };
+
+  lines.forEach((line, i) => {
+    if (line.trim().startsWith('|') && line.trim().endsWith('|')) {
+      inTable = true;
+      tableRows.push(line.trim());
+    } else {
+      if (inTable) {
+        flushTable(i);
+        inTable = false;
+      }
+      if (line.trim().length > 0) {
+        elements.push(
+          <div key={`${keyPrefix}_l_${i}`} className="leading-relaxed">
+            {renderInlineFormatting(line)}
+          </div>
+        );
+      } else {
+        elements.push(<div key={`${keyPrefix}_sp_${i}`} className="h-1" />);
+      }
+    }
+  });
+
+  if (inTable) flushTable(lines.length);
+  return <React.Fragment key={keyPrefix}>{elements}</React.Fragment>;
+}
+
+// Inline formatting for bold, inline code, bullets, headers
+function renderInlineFormatting(line: string): React.ReactNode {
+  // Headers
+  if (line.startsWith('### ')) {
+    return <h4 className="text-cyan-300 font-bold text-xs mt-2 mb-1">{line.slice(4)}</h4>;
+  }
+  if (line.startsWith('## ')) {
+    return <h3 className="text-white font-extrabold text-xs mt-2 mb-1">{line.slice(3)}</h3>;
+  }
+  if (line.startsWith('• ') || line.startsWith('- ')) {
+    return (
+      <span className="flex items-start gap-1.5">
+        <span className="text-cyan-400 mt-0.5">•</span>
+        <span>{renderBoldAndCode(line.slice(2))}</span>
+      </span>
+    );
+  }
+  return renderBoldAndCode(line);
+}
+
+function renderBoldAndCode(text: string): React.ReactNode {
+  // Split by inline code `...` and bold **...**
+  const chunks = text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g);
+  return chunks.map((chunk, idx) => {
+    if (chunk.startsWith('`') && chunk.endsWith('`') && chunk.length > 2) {
+      return (
+        <code key={idx} className="bg-[#121c33] text-cyan-300 px-1 py-0.2 rounded font-mono text-[10px] border border-[#202f4e]">
+          {chunk.slice(1, -1)}
+        </code>
+      );
+    }
+    if (chunk.startsWith('**') && chunk.endsWith('**') && chunk.length > 4) {
+      return (
+        <strong key={idx} className="font-bold text-white">
+          {chunk.slice(2, -2)}
+        </strong>
+      );
+    }
+    return <span key={idx}>{chunk}</span>;
+  });
+}
+
+// ─── Main Shachina Assistant Panel Component ─────────────────────────────────
 export const ShachinaAssistantPanel: React.FC<ShachinaAssistantPanelProps> = ({
   selectedSymbol, selectedMarket = 'NEPSE', user, onClose, onAnnotationsReceived, onOrderPlaced, isEmbedded = false,
 }) => {
@@ -27,9 +188,14 @@ export const ShachinaAssistantPanel: React.FC<ShachinaAssistantPanelProps> = ({
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [lang, setLang] = useState<'ne' | 'en' | 'hi'>('ne');
   const [analysisMode, setAnalysisMode] = useState<'beginner' | 'pro'>('pro');
+  const [activeCategory, setActiveCategory] = useState<'all' | 'ai' | 'code' | 'trading'>('all');
+
+  // Voice state
   const [voiceEnabled, setVoiceEnabled] = useState<boolean>(true);
   const [speakingMsgId, setSpeakingMsgId] = useState<string | null>(null);
   const [voiceWave, setVoiceWave] = useState<boolean>(false);
+  const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
+
   const [currentDecision, setCurrentDecision] = useState<'BUY' | 'SELL' | 'WAIT' | 'NO_TRADE'>('WAIT');
   const [currentRegime, setCurrentRegime] = useState<string>('RANGING');
   const [activeProposal, setActiveProposal] = useState<TradeProposal | null>(null);
@@ -59,11 +225,14 @@ export const ShachinaAssistantPanel: React.FC<ShachinaAssistantPanelProps> = ({
   }, [activeConvId]);
 
   useEffect(() => { loadConversations(); }, [loadConversations]);
+
   useEffect(() => {
     if (!activeConvId) return;
     (async () => { try { const full = await api.getConversation(activeConvId); setMessages(full.messages || []); } catch {} })();
   }, [activeConvId]);
+
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, interimText, isGenerating]);
+
   useEffect(() => {
     (async () => {
       try {
@@ -95,6 +264,23 @@ export const ShachinaAssistantPanel: React.FC<ShachinaAssistantPanelProps> = ({
     } catch {}
   };
 
+  const exportConversation = () => {
+    if (messages.length === 0) return;
+    const txt = messages.map(m => `[${m.role.toUpperCase()}] ${m.created_at}\n${m.content}\n\n`).join('-------------------\n\n');
+    const blob = new Blob([txt], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `shachina_chat_${selectedSymbol}_${Date.now()}.txt`;
+    a.click();
+  };
+
+  const copyMessageContent = (id: string, content: string) => {
+    navigator.clipboard.writeText(content);
+    setCopiedMsgId(id);
+    setTimeout(() => setCopiedMsgId(null), 2000);
+  };
+
   const speakMessage = (msg: ConversationMessage) => {
     if (!voiceEnabled) return;
     const text = msg.speech_text || msg.content;
@@ -111,6 +297,10 @@ export const ShachinaAssistantPanel: React.FC<ShachinaAssistantPanelProps> = ({
   const handleSendMessage = async (textToSend?: string) => {
     const text = (textToSend || inputText).trim();
     if (!text || isGenerating) return;
+    voiceEngine.stop();
+    setSpeakingMsgId(null);
+    setVoiceWave(false);
+
     setInputText(''); setInterimText(''); setIsGenerating(true);
     let convId = activeConvId;
     if (!convId) {
@@ -173,25 +363,24 @@ export const ShachinaAssistantPanel: React.FC<ShachinaAssistantPanelProps> = ({
 
   const filteredConvs = conversations.filter((c) => c.title.toLowerCase().includes(searchQuery.toLowerCase()));
 
-  const renderContent = (text: string) =>
-    text.split('\n').map((line, i) => (
-      <span key={i} className="block">
-        {line.split(/(\*\*[^*]+\*\*)/g).map((chunk, j) =>
-          chunk.startsWith('**') && chunk.endsWith('**')
-            ? <strong key={j} className="font-bold text-white">{chunk.slice(2, -2)}</strong>
-            : <span key={j}>{chunk}</span>
-        )}
-      </span>
-    ));
+  // Categorized Prompt Suggestions
+  const promptPills = {
+    all: ['कति profit भयो आज?', 'NABIL trade setup?', 'Python ma script lekh', 'Why is NEPSE falling?'],
+    ai: ['Explain quantum computing simply', 'Draft a professional business email', 'What is machine learning?', 'Translate this to Nepali'],
+    code: ['Python async FastAPI code', 'TypeScript React custom hook', 'Binary search tree algorithm', 'SQL query for highest volume'],
+    trading: ['कति profit भयो आज?', 'NABIL trade setup?', 'Why is NEPSE falling?', 'Explain FVG vs Order Block']
+  };
 
   return (
     <div className="h-full w-full flex flex-col bg-[#080d18] border-l border-[#1a2337] text-slate-100 relative overflow-hidden font-['Plus_Jakarta_Sans',sans-serif] select-none">
 
-      {/* Header */}
+      {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div className="p-3 bg-[#050810] border-b border-[#161f33] space-y-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <button onClick={() => setIsDrawerOpen(!isDrawerOpen)} className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-cyan-300 transition-colors"><MessageSquare className="w-4 h-4" /></button>
+            <button onClick={() => setIsDrawerOpen(!isDrawerOpen)} className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-cyan-300 transition-colors" title="Chat History">
+              <MessageSquare className="w-4 h-4" />
+            </button>
             <div className="flex items-center gap-1.5">
               <span className="font-extrabold text-sm text-cyan-300 font-mono">SHACHINA AI</span>
               <span className="text-[9px] bg-cyan-950 text-cyan-400 border border-cyan-800 px-1.5 rounded font-bold font-mono">{selectedSymbol}</span>
@@ -256,12 +445,21 @@ export const ShachinaAssistantPanel: React.FC<ShachinaAssistantPanelProps> = ({
         </div>
       </div>
 
-      {/* Chat History Drawer */}
+      {/* ── Chat History Drawer ────────────────────────────────────────────── */}
       {isDrawerOpen && (
         <div className="absolute inset-y-0 left-0 w-64 bg-[#050810] border-r border-[#161f33] z-30 flex flex-col p-3 shadow-2xl space-y-3 font-mono text-xs">
           <div className="flex items-center justify-between border-b border-[#161f33] pb-2">
             <span className="font-extrabold text-cyan-300">Saved Chats</span>
-            <button onClick={handleNewChat} className="flex items-center gap-1 px-2 py-1 rounded bg-cyan-400 hover:bg-cyan-300 text-black font-extrabold text-[10px]"><Plus className="w-3 h-3" /> New</button>
+            <div className="flex items-center gap-1">
+              {messages.length > 0 && (
+                <button onClick={exportConversation} className="p-1 rounded bg-[#16233b] hover:bg-cyan-950 text-slate-300 hover:text-cyan-300" title="Export Conversation">
+                  <Download className="w-3.5 h-3.5" />
+                </button>
+              )}
+              <button onClick={handleNewChat} className="flex items-center gap-1 px-2 py-1 rounded bg-cyan-400 hover:bg-cyan-300 text-black font-extrabold text-[10px]">
+                <Plus className="w-3 h-3" /> New
+              </button>
+            </div>
           </div>
           <div className="relative">
             <Search className="w-3 h-3 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
@@ -281,43 +479,83 @@ export const ShachinaAssistantPanel: React.FC<ShachinaAssistantPanelProps> = ({
         </div>
       )}
 
-      {/* Messages */}
+      {/* ── Messages Area ─────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto p-3 space-y-3 text-xs font-mono">
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full gap-3 text-slate-600">
             <Sparkles className="w-8 h-8 text-cyan-900" />
-            <p className="text-center text-[11px] leading-relaxed max-w-[200px]">Shachina तयार छ। Trade setup, P&L, वा कुनै पनि प्रश्न सोध्नुहोस्।</p>
-            <div className="grid grid-cols-1 gap-1.5 w-full max-w-[220px]">
-              {['कति profit भयो आज?', 'NABIL trade setup dinus', 'Why is NEPSE falling?'].map((q) => (
-                <button key={q} onClick={() => handleSendMessage(q)} className="text-[10px] px-2 py-1.5 rounded-lg bg-[#0d1424] border border-[#1e2a44] text-slate-400 hover:border-cyan-500/40 hover:text-cyan-300 transition-colors text-left">{q}</button>
+            <p className="text-center text-[11px] leading-relaxed max-w-[220px]">
+              Shachina तयार छ — Coding, Mathematics, Science, Translation, वा Trading सोध्नुहोस्।
+            </p>
+
+            {/* Prompt Categories */}
+            <div className="flex items-center gap-1 bg-[#0a0f1d] p-1 rounded-lg border border-[#1a263f] text-[9px]">
+              {(['all', 'trading', 'code', 'ai'] as const).map(cat => (
+                <button
+                  key={cat}
+                  onClick={() => setActiveCategory(cat)}
+                  className={`px-2 py-0.5 rounded uppercase font-bold transition-all ${
+                    activeCategory === cat ? 'bg-cyan-400 text-black' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {cat === 'all' ? 'Popular' : cat}
+                </button>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-1 gap-1.5 w-full max-w-[240px]">
+              {promptPills[activeCategory].map((q) => (
+                <button key={q} onClick={() => handleSendMessage(q)} className="text-[10px] px-2.5 py-1.5 rounded-lg bg-[#0d1424] border border-[#1e2a44] text-slate-400 hover:border-cyan-500/40 hover:text-cyan-300 transition-colors text-left truncate">
+                  {q}
+                </button>
               ))}
             </div>
           </div>
         )}
+
         {messages.map((m) => (
           <div key={m.id} className={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
-            <div className={`max-w-[90%] rounded-2xl p-2.5 text-[11px] leading-relaxed ${m.role === 'user' ? 'rounded-br-none bg-cyan-500/15 border border-cyan-500/30 text-cyan-100' : 'rounded-bl-none bg-[#0d1424] border border-[#1e2a44] text-slate-200'}`}>
-              {m.role === 'shachina' && <div className="flex items-center gap-1.5 mb-1.5"><span className="text-[9px] font-black text-cyan-400 tracking-widest">✦ SHACHINA</span></div>}
-              <div className="whitespace-pre-wrap">{renderContent(m.content)}</div>
+            <div className={`max-w-[92%] rounded-2xl p-3 text-[11px] leading-relaxed ${m.role === 'user' ? 'rounded-br-none bg-cyan-500/15 border border-cyan-500/30 text-cyan-100' : 'rounded-bl-none bg-[#0d1424] border border-[#1e2a44] text-slate-200 shadow-md'}`}>
+              {m.role === 'shachina' && (
+                <div className="flex items-center justify-between mb-2 border-b border-[#1c2842] pb-1">
+                  <span className="text-[9px] font-black text-cyan-400 tracking-widest flex items-center gap-1">
+                    ✦ SHACHINA AI
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => copyMessageContent(m.id, m.content)}
+                      className="p-1 rounded hover:bg-[#16233b] text-slate-400 hover:text-cyan-300 transition-colors"
+                      title="Copy response"
+                    >
+                      {copiedMsgId === m.id ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Formatted Message Content */}
+              <FormattedMessage content={m.content} />
 
               {/* Per-message Speak button */}
               {m.role === 'shachina' && (
-                <button onClick={() => speakMessage(m)}
-                  className={`mt-2 flex items-center gap-1.5 px-2 py-1 rounded-lg text-[9px] font-bold transition-all ${
-                    speakingMsgId === m.id ? 'bg-purple-500/20 border border-purple-400/50 text-purple-300 animate-pulse'
-                    : voiceEnabled ? 'bg-cyan-950/50 border border-cyan-800/30 text-cyan-600 hover:text-cyan-300 hover:border-cyan-500/50'
-                    : 'bg-slate-900/40 border border-slate-700/20 text-slate-600 opacity-40 cursor-not-allowed'}`}>
-                  {speakingMsgId === m.id ? (
-                    <><span className="flex items-end gap-[2px] h-3">{[6,10,7].map((h,i)=><span key={i} className="w-[2px] bg-purple-400 rounded-full animate-bounce" style={{height:`${h}px`,animationDelay:`${i*80}ms`}} />)}</span><span>बोल्दैछ... (Stop)</span></>
-                  ) : (
-                    <><Volume2 className="w-3 h-3" /><span>🔊 सुन्नुहोस्</span></>
-                  )}
-                </button>
+                <div className="mt-2.5 pt-1.5 border-t border-[#18233a] flex items-center gap-2">
+                  <button onClick={() => speakMessage(m)}
+                    className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-[9px] font-bold transition-all ${
+                      speakingMsgId === m.id ? 'bg-purple-500/20 border border-purple-400/50 text-purple-300 animate-pulse'
+                      : voiceEnabled ? 'bg-cyan-950/50 border border-cyan-800/30 text-cyan-600 hover:text-cyan-300 hover:border-cyan-500/50'
+                      : 'bg-slate-900/40 border border-slate-700/20 text-slate-600 opacity-40 cursor-not-allowed'}`}>
+                    {speakingMsgId === m.id ? (
+                      <><span className="flex items-end gap-[2px] h-3">{[6,10,7].map((h,i)=><span key={i} className="w-[2px] bg-purple-400 rounded-full animate-bounce" style={{height:`${h}px`,animationDelay:`${i*80}ms`}} />)}</span><span>बोल्दैछ... (Stop)</span></>
+                    ) : (
+                      <><Volume2 className="w-3 h-3" /><span>🔊 सुन्नुहोस्</span></>
+                    )}
+                  </button>
+                </div>
               )}
 
               {/* Trade Card */}
               {m.role === 'shachina' && m.trade_proposal && m.trade_proposal.entry_price && (
-                <div className="mt-2 p-2.5 rounded-xl bg-[#080f1f] border border-[#1e2a44] space-y-2">
+                <div className="mt-2.5 p-2.5 rounded-xl bg-[#080f1f] border border-[#1e2a44] space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] font-black text-slate-300">📋 {m.trade_proposal.symbol} SETUP</span>
                     <span className={`px-2 py-0.5 rounded font-black text-[10px] ${m.trade_proposal.direction === 'BUY' ? 'bg-emerald-950 text-emerald-400 border border-emerald-700' : 'bg-rose-950 text-rose-400 border border-rose-700'}`}>
@@ -350,25 +588,31 @@ export const ShachinaAssistantPanel: React.FC<ShachinaAssistantPanelProps> = ({
         {isGenerating && (
           <div className="flex items-center gap-2 text-xs font-mono text-cyan-400 p-2">
             <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            <span>Shachina analyze गर्दैछ...</span>
+            <span>Shachina reasoning & analyzing...</span>
           </div>
         )}
         {executionNotice && <div className="p-2.5 rounded-xl bg-cyan-950/90 border border-cyan-400 text-cyan-300 text-xs font-mono font-bold">{executionNotice}</div>}
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input Bar */}
+      {/* ── Input Bar ──────────────────────────────────────────────────────── */}
       <div className="p-2.5 bg-[#050810] border-t border-[#161f33]">
-        <div className="flex gap-1.5 mb-2 overflow-x-auto pb-0.5">
-          {['कति profit?', 'P&L show gara', 'NABIL setup?', 'Market kasto xa?'].map((q) => (
-            <button key={q} onClick={() => handleSendMessage(q)} className="flex-shrink-0 text-[9px] px-2 py-1 rounded-lg bg-[#0d1424] border border-[#1e2a44] text-slate-500 hover:text-cyan-300 hover:border-cyan-500/40 transition-colors font-mono whitespace-nowrap">{q}</button>
+        {/* Quick shortcut chips */}
+        <div className="flex gap-1.5 mb-2 overflow-x-auto pb-0.5 scrollbar-none">
+          {['कति profit?', 'P&L report', 'NABIL setup?', 'Market overview', 'Explain code'].map((q) => (
+            <button key={q} onClick={() => handleSendMessage(q)} className="flex-shrink-0 text-[9px] px-2 py-1 rounded-lg bg-[#0d1424] border border-[#1e2a44] text-slate-400 hover:text-cyan-300 hover:border-cyan-500/40 transition-colors font-mono whitespace-nowrap">{q}</button>
           ))}
         </div>
         <div className="flex items-center gap-2 bg-[#0d1424] border border-[#1e2a44] rounded-xl px-3 py-2 focus-within:border-cyan-400 transition-colors">
-          <input type="text" placeholder={isListening ? '🎙️ सुनिरहेको छ...' : 'Trade, P&L, वा कुनै प्रश्न...'} value={inputText} onChange={(e) => setInputText(e.target.value)}
+          <input
+            type="text"
+            placeholder={isListening ? '🎙️ सुनिरहेको छ...' : 'Ask coding, science, P&L, or trade setup...'}
+            value={inputText}
+            onChange={(e) => setInputText(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(); } }}
-            className="flex-1 bg-transparent text-xs text-white placeholder-slate-500 focus:outline-none font-mono" />
-          <button onClick={() => setVoiceEnabled((v) => !v)} className={`p-1.5 rounded-lg transition-all ${voiceEnabled ? 'text-cyan-400 hover:bg-cyan-950' : 'text-slate-600 hover:bg-slate-800'}`} title="Toggle Voice">
+            className="flex-1 bg-transparent text-xs text-white placeholder-slate-500 focus:outline-none font-mono"
+          />
+          <button onClick={() => setVoiceEnabled((v) => !v)} className={`p-1.5 rounded-lg transition-all ${voiceEnabled ? 'text-cyan-400 hover:bg-cyan-950' : 'text-slate-600 hover:bg-slate-800'}`} title={voiceEnabled ? 'Voice ON' : 'Voice OFF'}>
             {voiceEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
           </button>
           <button onClick={toggleListening} className={`p-1.5 rounded-lg transition-all ${isListening ? 'bg-rose-600 text-white animate-pulse' : 'hover:bg-slate-800 text-slate-400 hover:text-cyan-300'}`}>
