@@ -134,11 +134,17 @@ def _classify_intent(msg_lower: str) -> str:
     if any(k in msg_lower for k in exec_keywords):
         return "TRADE_EXECUTION"
 
-    # Explicit requests asking Shachina to evaluate a trade setup
+    # Explicit requests asking Shachina to evaluate a trade setup / chart / levels
     trade_decision_keywords = [
         "can i take trade", "can i take this trade", "should i buy", "should i sell",
         "trade setup dinus", "entry kaha garne", "trade linu thik", "give me setup",
-        "trade setup ready", "setup evaluate", "is this a good buy", "is this a good trade"
+        "trade setup ready", "setup evaluate", "is this a good buy", "is this a good trade",
+        "buy or sell", "buy or sell?", "buy garum", "sell garum", "buy garna milcha",
+        "sell garna milcha", "entry kaha", "sl kaha", "target kati", "rr kati",
+        "trend kasto cha", "breakout bhayo", "analyze this chart", "chart hera",
+        "yo chart hera", "trade lina hunxa", "trade lida hunxa", "ahile trade lina hunxa",
+        "kasto cha chart", "setup kasto cha", "trade setup", "trade analysis",
+        "what is the setup", "where is the entry", "where is the sl", "where is the target",
     ]
     if any(k in msg_lower for k in trade_decision_keywords):
         return "EXPLICIT_TRADE_DECISION"
@@ -615,23 +621,54 @@ def _build_trading_only_system_prompt(
 [CURRENT TIME]: {now_npt.strftime('%A, %B %d, %Y, %I:%M:%S %p')} NPT
 
 ## STRICT TRADING FOCUS (NO WEB SEARCH / PURE QUANTITATIVE ANALYSIS)
-You are operating in DEDICATED TRADING AI MODE.
-- Analyze ONLY the active chart, candlestick patterns, price action, volume, and quantitative market structure.
-- Do NOT perform web searches or give generic search results. Base your analysis on verified live OHLCV price action provided in context.
-- Analyze institutional market structure:
-  * Trend & Swing Structure (HH/HL/LH/LL)
-  * Smart Money Concepts: BOS (Break of Structure), CHoCH (Change of Character), MSS (Market Structure Shift)
-  * Liquidity Pools: BSL (Buy-Side Liquidity), SSL (Sell-Side Liquidity), Equal Highs/Lows
-  * Imbalances: FVG (Fair Value Gap), Order Blocks (Bullish/Bearish OB)
-  * Dealing Ranges: Premium vs Discount zones
-  * Support & Resistance levels
-- ALWAYS provide a clear, actionable decision:
-  * **LONG 🟢** (with exact entry price/zone, Stop Loss, Target 1, Target 2, Target 3, Risk/Reward ratio 1:2+)
-  * **SHORT 🔴** (with exact levels)
-  * **WAIT 🟡** (explicitly explain which conditions are missing: e.g. waiting for liquidity sweep, waiting for BOS confirmation, or waiting for retest)
-  * **NO TRADE ⚪** (if price is ranging in chop without edge)
-- State exact invalidation level for every setup.
-- Never guarantee profits. Always emphasize capital preservation and risk management (Max 1% risk per trade).
+You are operating in DEDICATED TRADING AI MODE inside the SHACHINA Trading Section.
+- Analyze ONLY the active symbol's verified live OHLCV price action, candlestick patterns, volume, and quantitative market structure.
+- Do NOT perform web searches. Use the structured market data provided in context.
+- When asked a trade question ("Can I take trade?", "Buy or sell?", "Entry kaha?", "SL kaha?", "Target kati?", "RR kati?", "Analyze chart", "Breakout bhayo?"):
+  You MUST format your trade analysis using the following structured template:
+
+📊 **TRADE ANALYSIS**
+
+• **Symbol**: [EXACT SELECTED SYMBOL]
+• **Price**: NPR [CURRENT LIVE/LAST PRICE]
+• **Timeframe**: [CURRENT TIMEFRAME]
+• **Market**: [EXCHANGE, e.g. NEPSE]
+• **Data**: 🟢 **LIVE** (or 🔴 **MARKET CLOSED** if market is not active / 🟠 **DATA DELAYED** / ⚠️ **LIVE DATA UNAVAILABLE**)
+
+### **Signal:**
+🟢 **BUY / LONG**
+(or 🔴 **SELL / SHORT** | 🟡 **WAIT** | ⚪ **NO TRADE**)
+
+• **Entry**: NPR [LEVEL]
+• **Stop Loss**: NPR [LEVEL]
+• **TP1**: NPR [LEVEL]
+• **TP2**: NPR [LEVEL]
+• **TP3**: NPR [LEVEL]
+• **RR**: 1:[CALCULATED R:R VALUE]
+• **Trend**: **[BULLISH / BEARISH / RANGE]**
+• **Support**: NPR [LEVEL]
+• **Resistance**: NPR [LEVEL]
+• **Confidence**: [0–100]/100
+
+### **Reason:**
+• [Key reason 1: Market structure / BOS / CHoCH / Trend]
+• [Key reason 2: Candlestick pattern / Price Action]
+• [Key reason 3: Liquidity / Order Block / FVG / Volume / Momentum]
+
+### **Confirmation:**
+[Explicit confirmation condition needed for entry, e.g. retest of FVG, liquidity sweep, or displacement close]
+
+### **Invalidation:**
+[Exact price level that invalidates this trade setup]
+
+- MATHEMATICAL R:R RULES:
+  * LONG: Risk = Entry - SL, Reward = TP1 - Entry, RR = Reward / Risk
+  * SHORT: Risk = SL - Entry, Reward = Entry - TP1, RR = Reward / Risk
+  * Setups with RR below 1:2 must be marked as 🟡 **WAIT** or ⚪ **NO TRADE**.
+- If data is unavailable or insufficient:
+  Return 🟡 **WAIT** with `Data: ⚠️ LIVE DATA UNAVAILABLE`. Never invent fake levels.
+- For general educational questions (e.g. "What is liquidity?", "Explain FVG"):
+  Answer with a concise, clear educational explanation without forcing the trade analysis template.
 - {lang_inst}
 
 {mode_inst}
@@ -1081,7 +1118,11 @@ async def assistant_chat(
             speech_text = "Market data unavailable. Order execution halted."
 
     # ── ROUTE B: EXPLICIT TRADE DECISION & EVALUATION ─────────────────────────
-    elif intent == "EXPLICIT_TRADE_DECISION":
+    elif intent == "EXPLICIT_TRADE_DECISION" or (req.is_trading_only and any(k in msg_lower for k in [
+        "trade", "buy", "sell", "setup", "entry", "sl", "target", "trend", "breakout",
+        "chart", "rr", "kaha", "kati", "milcha", "hunxa", "structure", "scan", "level",
+        "quick scan", "technical", "signal", "invalidation", "order block", "fvg"
+    ])):
         account_size = current_user.trading_settings.account_size if current_user.trading_settings else 1000000.0
         risk_pct = current_user.trading_settings.risk_percentage if current_user.trading_settings else 1.0
 

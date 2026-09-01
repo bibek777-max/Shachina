@@ -98,11 +98,29 @@ class TradeSetupGenerator:
         risk_pct: float = 1.0,
         language: str = "en"
     ) -> SetupEvaluation:
-        if len(candles) < 15:
+        if len(candles) < 10:
+            unavailable_text = (
+                f"📊 **TRADE ANALYSIS**\n\n"
+                f"• **Symbol**: `{symbol}`\n"
+                f"• **Price**: N/A\n"
+                f"• **Timeframe**: `{timeframe}`\n"
+                f"• **Market**: `{market}`\n"
+                f"• **Data**: ⚠️ **LIVE DATA UNAVAILABLE**\n\n"
+                f"### **Signal:**\n"
+                f"🟡 **WAIT**\n\n"
+                f"• **Confidence**: `0/100`\n\n"
+                f"### **Reason:**\n"
+                f"• Insufficient historical candle data to construct reliable market structure.\n"
+                f"• Minimum 10 candles required for institutional order flow analysis.\n\n"
+                f"### **Confirmation:**\n"
+                f"Waiting for live market feed connection.\n\n"
+                f"### **Invalidation:**\n"
+                f"No active setup valid without live market feed."
+            )
             return SetupEvaluation(
                 has_setup=False,
-                beginner_explanation="Insufficient historical data to analyze structure.",
-                pro_analysis="Sample size below minimum 15-candle requirement."
+                beginner_explanation=unavailable_text,
+                pro_analysis=unavailable_text
             )
 
         # 1. Patterns & Market Structure
@@ -127,20 +145,25 @@ class TradeSetupGenerator:
         elif structure.trend == "BEARISH":
             score += 15
             reasons.append("Bearish market structure (Lower Highs / Lower Lows)")
+        else:
+            reasons.append("Price consolidating in equilibrium range")
 
         if structure.bos_event == "BOS_BULLISH":
-            score += 10
+            score += 15
             reasons.append("Confirmed Break of Structure (BOS) to the upside")
-        elif structure.bos_event == "CHOCH_BULLISH" or structure.bos_event == "MSS_BULLISH":
+        elif structure.bos_event in ("CHOCH_BULLISH", "MSS_BULLISH"):
             score += 15
             reasons.append("Bullish Market Structure Shift (MSS/CHoCH) with displacement")
+        elif structure.bos_event == "BOS_BEARISH":
+            score += 15
+            reasons.append("Confirmed Break of Structure (BOS) to the downside")
 
         # Dealing Range / Discount (max 15)
         if structure.dealing_range_zone == "DISCOUNT":
             score += 15
             reasons.append("Price is in Discount zone (below equilibrium) — optimal for Longs")
         elif structure.dealing_range_zone == "PREMIUM":
-            reasons.append("Price is in Premium zone (above equilibrium)")
+            reasons.append("Price is in Premium zone (above equilibrium) — optimal for Shorts or profit-taking")
 
         # Candlestick Confirmation (max 20)
         if bullish_patterns:
@@ -165,26 +188,34 @@ class TradeSetupGenerator:
             score += 10
             reasons.append(f"Volume Expansion: {structure.volume_ratio:.1f}x of 20-bar average")
 
+        if not reasons:
+            reasons.append("Market is testing equilibrium levels without directional expansion.")
+
         # Determine Setup Quality & Decision
-        if score >= 75:
+        if score >= 70:
             setup_quality = "A+"
             decision = "YES"
-        elif score >= 60:
+            signal_text = "BUY / LONG" if structure.trend == "BULLISH" or bullish_patterns else "SELL / SHORT"
+            signal_emoji = "🟢" if "BUY" in signal_text else "🔴"
+        elif score >= 55:
             setup_quality = "A"
             decision = "YES"
-        elif score >= 45:
+            signal_text = "BUY / LONG" if structure.trend == "BULLISH" or bullish_patterns else "SELL / SHORT"
+            signal_emoji = "🟢" if "BUY" in signal_text else "🔴"
+        elif score >= 35:
             setup_quality = "B"
             decision = "WAIT"
-        elif score >= 30:
-            setup_quality = "C"
-            decision = "WAIT"
+            signal_text = "WAIT"
+            signal_emoji = "🟡"
         else:
             setup_quality = "NO TRADE"
             decision = "NO"
+            signal_text = "NO TRADE"
+            signal_emoji = "⚪"
 
         direction = "BUY" if structure.trend == "BULLISH" or bullish_patterns else "SELL"
-        market_bias = "Bullish" if structure.trend == "BULLISH" else "Bearish" if structure.trend == "BEARISH" else "Neutral"
-        setup_name = f"Liquidity Reversal & Market Structure ({structure.regime})"
+        market_bias = "Bullish" if structure.trend == "BULLISH" else "Bearish" if structure.trend == "BEARISH" else "Range"
+        setup_name = f"Liquidity & Structure ({structure.regime})"
 
         # 3. Execution Levels (Structural Stop Loss & Realistic Multi-Targets)
         nearest_sup = structure.support_levels[0].price if structure.support_levels else latest_c - (atr * 1.5)
@@ -242,7 +273,7 @@ class TradeSetupGenerator:
         structure_summary = f"{structure.trend} trend ({structure.structure_type}). {structure.bos_event or 'Structure holding'}."
         candlestick_summary = ", ".join([p.name for p in recent_patterns]) if recent_patterns else "Consolidation candles near key level"
         confirmation_summary = f"Confluence score: {score}/100 with {len(reasons)} supporting factors."
-        invalidation_summary = f"Daily close below Stop Loss NPR {sl_price:.2f} invalidates this setup."
+        invalidation_summary = f"Close below Stop Loss NPR {sl_price:.2f} invalidates this setup." if direction == "BUY" else f"Close above Stop Loss NPR {sl_price:.2f} invalidates this setup."
 
         proposal = TradeProposal(
             symbol=symbol,
@@ -271,57 +302,35 @@ class TradeSetupGenerator:
             reasons=reasons,
         )
 
-        # Section 27 Exact Response Format
-        pro_analysis = (
-            f"### SHACHINA TRADE DECISION\n\n"
-            f"**Decision:** **{decision}**\n\n"
-            f"**Symbol:** `{symbol}` ({market})\n"
-            f"**Direction:** **{'LONG' if direction == 'BUY' else 'SHORT'}**\n"
-            f"**Market Bias:** {market_bias}\n"
-            f"**Entry:** NPR {entry_price:.2f} (Zone: {proposal.entry_zone})\n"
-            f"**Stop Loss:** NPR {sl_price:.2f}\n"
-            f"**Target 1:** NPR {t1_price:.2f}\n"
-            f"**Target 2:** NPR {t2_price:.2f}\n"
-            f"**Target 3:** NPR {t3_price:.2f}\n"
-            f"**Risk:** NPR {risk_per_share:.2f}/share (Max risk: NPR {estimated_risk_npr:,.2f})\n"
-            f"**Potential Reward:** NPR {potential_reward:.2f}/share\n"
-            f"**Risk/Reward:** 1:{rr_ratio}\n"
-            f"**Setup:** {setup_name}\n"
-            f"**Liquidity:** {liquidity_summary}\n"
-            f"**Structure:** {structure_summary}\n"
-            f"**Candlestick:** {candlestick_summary}\n"
-            f"**Confirmation:** {confirmation_summary}\n"
-            f"**Invalidation:** {invalidation_summary}\n"
-            f"**Setup Quality:** **{setup_quality}**\n\n"
-            f"**Reason:** {reasons[0] if reasons else 'Market is currently testing key liquidity levels.'}\n\n"
-            f"⚠️ *Never guarantee profit. Statistical edge only.*"
-        )
+        # Standardized Response Format
+        reasons_formatted = "\n".join([f"• {r}" for r in reasons[:4]])
 
-        # Beginner explanation
-        if language == "ne":
-            beginner_exp = (
-                f"### SHACHINA निर्णय: **{decision}**\n\n"
-                f"📊 **{symbol} विश्लेषण ({setup_quality} गुणस्तर)**\n\n"
-                f"- **दिशा**: {direction} ({'खरिद' if direction == 'BUY' else 'बिक्री'})\n"
-                f"- **प्रवेश मूल्य (Entry)**: NPR {entry_price:.2f}\n"
-                f"- **Stop Loss**: NPR {sl_price:.2f} (सुरक्षा घेरा)\n"
-                f"- **Target 1**: NPR {t1_price:.2f}\n"
-                f"- **जोखिम र नाफा अनुपात (R:R)**: 1:{rr_ratio}\n"
-                f"- **सुझाव**: {reasons[0] if reasons else 'स्पष्ट confirmation नआएसम्म पर्खनुहोस्। '}\n\n"
-                f"💡 *पुँजी सुरक्षा पहिलो प्राथमिकता हो।*"
-            )
-        else:
-            beginner_exp = (
-                f"### SHACHINA DECISION: **{decision}**\n\n"
-                f"📊 **{symbol} Analysis ({setup_quality} Quality)**\n\n"
-                f"- **Direction**: {'LONG / BUY' if direction == 'BUY' else 'SHORT / SELL'}\n"
-                f"- **Entry**: NPR {entry_price:.2f}\n"
-                f"- **Stop Loss**: NPR {sl_price:.2f}\n"
-                f"- **Target 1**: NPR {t1_price:.2f}\n"
-                f"- **Risk / Reward**: 1:{rr_ratio}\n"
-                f"- **Key Reason**: {reasons[0] if reasons else 'Market in consolidation'}\n\n"
-                f"💡 *Preserve capital first before taking any trade.*"
-            )
+        pro_analysis = (
+            f"📊 **TRADE ANALYSIS**\n\n"
+            f"• **Symbol**: `{symbol}`\n"
+            f"• **Price**: NPR {latest_c:.2f}\n"
+            f"• **Timeframe**: `{timeframe}`\n"
+            f"• **Market**: `{market}`\n"
+            f"• **Data**: 🟢 **LIVE**\n\n"
+            f"### **Signal:**\n"
+            f"{signal_emoji} **{signal_text}**\n\n"
+            f"• **Entry**: NPR {entry_price:.2f}\n"
+            f"• **Stop Loss**: NPR {sl_price:.2f}\n"
+            f"• **TP1**: NPR {t1_price:.2f}\n"
+            f"• **TP2**: NPR {t2_price:.2f}\n"
+            f"• **TP3**: NPR {t3_price:.2f}\n"
+            f"• **RR**: 1:{rr_ratio:.1f}\n"
+            f"• **Trend**: **{structure.trend.upper()}**\n"
+            f"• **Support**: NPR {nearest_sup:.2f}\n"
+            f"• **Resistance**: NPR {nearest_res:.2f}\n"
+            f"• **Confidence**: `{score}/100` ({setup_quality})\n\n"
+            f"### **Reason:**\n"
+            f"{reasons_formatted}\n\n"
+            f"### **Confirmation:**\n"
+            f"{confirmation_summary}\n\n"
+            f"### **Invalidation:**\n"
+            f"{invalidation_summary}"
+        )
 
         return SetupEvaluation(
             has_setup=decision == "YES",
@@ -329,6 +338,6 @@ class TradeSetupGenerator:
             annotations=ann,
             patterns=patterns,
             structure=structure,
-            beginner_explanation=beginner_exp,
+            beginner_explanation=pro_analysis,
             pro_analysis=pro_analysis
         )

@@ -6,11 +6,13 @@ import {
 } from 'lucide-react';
 import { voiceEngine } from '../services/voiceEngine';
 import { api } from '../services/api';
-import { User, Conversation, ConversationMessage, ChartAnnotations, TradeProposal } from '../types';
+import { User, Conversation, ConversationMessage, ChartAnnotations, TradeProposal, MarketStatus } from '../types';
 
 interface ShachinaAssistantPanelProps {
   selectedSymbol: string;
   selectedMarket?: string;
+  timeframe?: string;
+  marketStatus?: MarketStatus | null;
   user?: User | null;
   onClose?: () => void;
   onAnnotationsReceived?: (annotations: ChartAnnotations) => void;
@@ -174,7 +176,7 @@ function renderBoldAndCode(text: string): React.ReactNode {
 
 // ─── Main Assistant Panel Component ──────────────────────────────────────────
 export const ShachinaAssistantPanel: React.FC<ShachinaAssistantPanelProps> = ({
-  selectedSymbol, selectedMarket = 'NEPSE', user, onClose, onAnnotationsReceived, onOrderPlaced, isEmbedded = false,
+  selectedSymbol, selectedMarket = 'NEPSE', timeframe = '1d', marketStatus, user, onClose, onAnnotationsReceived, onOrderPlaced, isEmbedded = false,
 }) => {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
@@ -229,13 +231,15 @@ export const ShachinaAssistantPanel: React.FC<ShachinaAssistantPanelProps> = ({
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, interimText, isGenerating]);
 
+  // Synchronize with Symbol & Timeframe changes immediately
   useEffect(() => {
     (async () => {
       try {
         const res = await api.askAssistant({
-          message: `Quick technical market structure scan on ${selectedSymbol}`,
+          message: `Technical structure and trade setup on ${selectedSymbol} (${timeframe})`,
           symbol: selectedSymbol,
           market: selectedMarket,
+          timeframe: timeframe,
           language: lang,
           analysis_mode: analysisMode,
           web_search: false,
@@ -247,14 +251,15 @@ export const ShachinaAssistantPanel: React.FC<ShachinaAssistantPanelProps> = ({
           setActiveProposal(res.trade_proposal);
           const dec = res.trade_proposal.decision || (res.trade_proposal.direction === 'BUY' ? 'BUY' : 'WAIT');
           setCurrentDecision(dec === 'YES' || dec === 'BUY' ? 'BUY' : dec === 'NO' ? 'NO_TRADE' : 'WAIT');
+          if (res.trade_proposal.market_bias) setCurrentRegime(res.trade_proposal.market_bias.toUpperCase());
         } else { setCurrentDecision('WAIT'); }
       } catch {}
     })();
-  }, [selectedSymbol, selectedMarket]);
+  }, [selectedSymbol, selectedMarket, timeframe]);
 
   const handleNewChat = async () => {
     try {
-      const newConv = await api.createConversation(`Trading Analysis ${selectedSymbol}`);
+      const newConv = await api.createConversation(`Trading ${selectedSymbol} (${timeframe})`);
       setConversations((prev) => [newConv, ...prev]);
       setActiveConvId(newConv.id); setMessages([]); setIsDrawerOpen(false);
     } catch {}
@@ -276,7 +281,7 @@ export const ShachinaAssistantPanel: React.FC<ShachinaAssistantPanelProps> = ({
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `shachina_trading_chat_${selectedSymbol}_${Date.now()}.txt`;
+    a.download = `shachina_trading_chat_${selectedSymbol}_${timeframe}_${Date.now()}.txt`;
     a.click();
   };
 
@@ -310,7 +315,7 @@ export const ShachinaAssistantPanel: React.FC<ShachinaAssistantPanelProps> = ({
     let convId = activeConvId;
     if (!convId) {
       try {
-        const newConv = await api.createConversation(`${selectedSymbol}: ${text.slice(0, 24)}`);
+        const newConv = await api.createConversation(`${selectedSymbol} (${timeframe}): ${text.slice(0, 20)}`);
         setConversations((prev) => [newConv, ...prev]);
         setActiveConvId(newConv.id); convId = newConv.id;
       } catch {}
@@ -323,6 +328,7 @@ export const ShachinaAssistantPanel: React.FC<ShachinaAssistantPanelProps> = ({
         message: text,
         symbol: selectedSymbol,
         market: selectedMarket,
+        timeframe: timeframe,
         language: lang,
         analysis_mode: analysisMode,
         conversation_id: convId || undefined,
@@ -391,7 +397,7 @@ export const ShachinaAssistantPanel: React.FC<ShachinaAssistantPanelProps> = ({
   // Categorized Prompt Suggestions (Strictly Quantitative Trading Focus)
   const promptPills = {
     all: [
-      `Analyze ${selectedSymbol} market structure`,
+      `Analyze ${selectedSymbol} (${timeframe}) structure`,
       `Is ${selectedSymbol} a BUY, SELL, or WAIT?`,
       `Where are ${selectedSymbol} order blocks & liquidity?`,
       `What is the stop loss and target for ${selectedSymbol}?`,
@@ -429,6 +435,16 @@ export const ShachinaAssistantPanel: React.FC<ShachinaAssistantPanelProps> = ({
             <div className="flex items-center gap-1.5">
               <span className="font-extrabold text-sm text-cyan-300 font-mono tracking-tight">TRADING AI</span>
               <span className="text-[9px] bg-cyan-950 text-cyan-400 border border-cyan-800 px-1.5 rounded font-bold font-mono">{selectedSymbol}</span>
+              <span className="text-[9px] bg-slate-900 text-slate-300 border border-slate-700 px-1.5 rounded font-bold font-mono uppercase">{timeframe}</span>
+              {marketStatus && (
+                <span className={`text-[8px] px-1 py-0.2 rounded font-bold font-mono border ${
+                  marketStatus.is_open
+                    ? 'bg-emerald-950 text-emerald-400 border-emerald-800'
+                    : 'bg-rose-950 text-rose-400 border-rose-800'
+                }`}>
+                  {marketStatus.is_open ? '🟢 LIVE' : '🔴 CLOSED (LTP)'}
+                </span>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-1.5 font-mono text-[10px]">

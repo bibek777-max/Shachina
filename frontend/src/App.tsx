@@ -389,6 +389,8 @@ export const App: React.FC = () => {
                 <ShachinaAssistantPanel
                   selectedSymbol={selectedSymbol}
                   selectedMarket={activeMarket}
+                  timeframe={timeframe}
+                  marketStatus={nepseStatus}
                   user={user}
                   isEmbedded={true}
                   onAnnotationsReceived={(ann) => setChartAnnotations(ann)}
