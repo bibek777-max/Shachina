@@ -224,6 +224,7 @@ export const App: React.FC = () => {
       <Header
         nepseStatus={nepseStatus}
         user={user}
+        positions={positions}
         onOpenVoice={() => setIsAssistantModalOpen(true)}
         onOpenProfile={() => setIsProfileOpen(true)}
       />
