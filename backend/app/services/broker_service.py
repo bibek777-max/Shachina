@@ -205,6 +205,7 @@ class ControlledBrokerEngine:
         db.add(order_record)
 
         # Update or Create Position
+        is_close = False
         if order_type.upper() == "BUY":
             pos_id = f"POS-{uuid.uuid4().hex[:8].upper()}"
             pos = TradingPosition(
@@ -224,12 +225,36 @@ class ControlledBrokerEngine:
             )
             db.add(pos)
         elif order_type.upper() == "SELL":
-            # Close existing open position if found
+            # Close existing open LONG position if found
             for p in open_positions:
-                if p.symbol == symbol.upper() and p.status == "OPEN":
+                if p.symbol == symbol.upper() and p.status == "OPEN" and p.direction == "LONG":
                     p.status = "CLOSED"
                     p.closed_at = now
+                    p.current_price = price
                     p.realized_pnl = (price - p.entry_price) * p.quantity
+                    p.unrealized_pnl = 0.0
+                    is_close = True
+                    break
+            
+            # If no open LONG position exists, open a SHORT position
+            if not is_close:
+                pos_id = f"POS-{uuid.uuid4().hex[:8].upper()}"
+                pos = TradingPosition(
+                    id=pos_id,
+                    user_id=user.id,
+                    symbol=symbol.upper(),
+                    market=market.upper(),
+                    direction="SHORT",
+                    quantity=quantity,
+                    entry_price=price,
+                    current_price=price,
+                    stop_loss=stop_loss,
+                    target=target,
+                    unrealized_pnl=0.0,
+                    status="OPEN",
+                    opened_at=now,
+                )
+                db.add(pos)
 
         # Record Audit
         audit = TradeAuditLog(
@@ -240,6 +265,7 @@ class ControlledBrokerEngine:
                 "symbol": symbol,
                 "quantity": quantity,
                 "price": price,
+                "order_type": order_type.upper(),
                 "mode": exec_mode,
                 "stop_loss": stop_loss,
                 "target": target,
@@ -250,10 +276,11 @@ class ControlledBrokerEngine:
         db.add(audit)
         await db.commit()
 
+        action_word = "Closed position in" if is_close else ("Bought" if order_type.upper() == "BUY" else "Sold / Shorted")
         msg = (
-            f"Buy order executed for {quantity:.0f} shares of {symbol} at NPR {price:.2f}."
+            f"{action_word} {quantity:.0f} shares of {symbol} at NPR {price:.2f}."
             if not has_live_broker else
-            f"Live broker confirmed fill: {quantity:.0f} shares of {symbol} at NPR {price:.2f}."
+            f"Live broker confirmed {action_word}: {quantity:.0f} shares of {symbol} at NPR {price:.2f}."
         )
 
         return OrderExecutionResult(

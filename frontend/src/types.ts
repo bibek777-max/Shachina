@@ -185,6 +185,38 @@ export interface TradeOrder {
   created_at: string;
 }
 
+export interface ClosedTrade {
+  id: string;
+  symbol: string;
+  market: string;
+  direction: 'LONG' | 'SHORT';
+  quantity: number;
+  entry_price: number;
+  exit_price: number;
+  stop_loss?: number;
+  target?: number;
+  realized_pnl: number;
+  status: string;
+  opened_at: string;
+  closed_at: string;
+}
+
+export interface PortfolioSummary {
+  account_size: number;
+  account_equity: number;
+  currency: string;
+  total_unrealized_pnl: number;
+  total_realized_pnl: number;
+  net_pnl: number;
+  open_positions: number;
+  closed_trades: number;
+  win_rate: number;
+  risk_percentage: number;
+  max_daily_loss: number;
+  min_risk_reward: number;
+  emergency_stop_enabled: boolean;
+}
+
 // ─── Conversation Memory ──────────────────────────────────────────────────────
 
 export interface ConversationMessage {

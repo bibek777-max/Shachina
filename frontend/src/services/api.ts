@@ -479,6 +479,44 @@ export const api = {
     return res.json();
   },
 
+  async getTradeHistory(): Promise<any[]> {
+    const res = await fetchWithTimeout(`${API_BASE}/trading/history`, {
+      headers: this.getAuthHeaders(),
+    });
+    if (!res.ok) return [];
+    return res.json();
+  },
+
+  async getPortfolioSummary(): Promise<any> {
+    const res = await fetchWithTimeout(`${API_BASE}/trading/portfolio`, {
+      headers: this.getAuthHeaders(),
+    });
+    if (!res.ok) return null;
+    return res.json();
+  },
+
+  async getTradingSettings(): Promise<any> {
+    const res = await fetchWithTimeout(`${API_BASE}/trading/settings`, {
+      headers: this.getAuthHeaders(),
+    });
+    if (!res.ok) return null;
+    return res.json();
+  },
+
+  async updateTradingSettings(data: {
+    account_size?: number;
+    risk_percentage?: number;
+    max_daily_loss?: number;
+    min_risk_reward?: number;
+  }) {
+    const res = await fetchWithTimeout(`${API_BASE}/trading/settings`, {
+      method: 'PUT',
+      headers: this.getAuthHeaders(),
+      body: JSON.stringify(data),
+    });
+    return res.json();
+  },
+
   async toggleEmergencyStop(enabled: boolean) {
     const res = await fetchWithTimeout(`${API_BASE}/trading/emergency-stop`, {
       method: 'POST',
