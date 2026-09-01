@@ -258,9 +258,9 @@ export class ShachinaVoiceEngine {
       if (preview) {
         onInterim(preview);
 
-        // Reset silence timer — fires onResult 1.4 s after user stops talking
+        // Reset silence timer — fires onResult 900ms after user stops talking
         this._clearSilenceTimer();
-        this.silenceTimer = setTimeout(() => fire(preview), 1400);
+        this.silenceTimer = setTimeout(() => fire(preview), 900);
       }
     };
 
