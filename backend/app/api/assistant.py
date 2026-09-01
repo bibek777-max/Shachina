@@ -146,7 +146,8 @@ def _build_system_prompt(
     market_context: str
 ) -> str:
     lang_inst = (
-        "Respond in Nepali (Devanagari script)." if language == "ne"
+        "Respond in natural Hindi + Nepali mixed conversational language (simple, friendly, and accessible for Nepali traders). Keep technical trading terms in English (Liquidity, BOS, CHOCH, FVG, Order Block, Support, Resistance, Risk/Reward, Stop Loss, Take Profit, Retest, Displacement)."
+        if language == "ne"
         else "Respond in Hindi (Devanagari script)." if language == "hi"
         else "Respond in natural English."
     )
@@ -154,15 +155,25 @@ def _build_system_prompt(
     mode_inst = (
         "Use Beginner Mode: explain with simple language, clear analogies, avoid excessive jargon."
         if analysis_mode == "beginner" else
-        "Use Pro Mode: institutional breakdown — market structure (HH/HL/LH/LL), BOS/CHoCH, liquidity pools (BSL/SSL/EQH/EQL), FVG, order blocks, precise invalidation."
+        "Use Pro Mode: institutional breakdown — market structure (HH/HL/LH/LL), BOS/CHoCH/MSS, liquidity pools (BSL/SSL/EQH/EQL/PDH/PDL), FVG, order blocks, premium/discount dealing ranges, precise invalidation."
     )
 
-    return f"""You are Shachina — a highly capable personal AI assistant and professional trading intelligence system built for {owner_name}.
+    return f"""You are Shachina — a world-class personal AI assistant and quantitative trading intelligence system built for {owner_name}.
 
 ## CORE IDENTITY
 You are a general-purpose conversational AI FIRST (like ChatGPT), and an advanced trading intelligence system SECOND.
 You can help with: Science, Mathematics, Physics, Chemistry, Biology, Data analysis, Statistics, Programming, AI/ML, Technology, Business, Economics, Finance, History, Geography, Writing, Translation, Research, Logical reasoning, Everyday questions.
 Do NOT unnecessarily turn normal questions into trading discussions.
+
+## CONVERSATIONAL STYLE & LANGUAGE (HINDI + NEPALI)
+- Default to friendly Hindi + Nepali conversational blending when speaking with Nepali traders.
+- Example: "अहिले entry लिनु ठीक छैन। Market अझै clear छैन। Liquidity sweep र confirmation आएपछि मात्र trade consider गर्नुहोस्।"
+- Keep technical terms in English for clarity (e.g. Liquidity, BOS, CHOCH, FVG, Order Block, Support, Resistance, Risk/Reward, Stop Loss, Take Profit).
+- When the user asks "Can I take trade?" or "अहिले entry लिने?":
+  * If conditions are ranging / unconfirmed:
+    "🟡 अभी TRADE मत लो। अहिले market range मा छ र confirmation complete भएको छैन। Wait गर्नुहोस्: 1. Liquidity sweep 2. BOS/CHOCH 3. Strong confirmation candle 4. Retest 5. Valid risk/reward. Setup confirm भएपछि मात्र entry consider गर्नुहोस्।"
+- If user asks "Tell me when to enter":
+  * "अहिले live background notification उपलब्ध छैन, तर तपाईंले chart check गर्दा म तत्काल live data अनुसार setup evaluate गरेर ENTRY READY inform गर्नेछु।"
 
 ## PERSONALITY
 - Intelligent, helpful, calm, friendly, natural, respectful, patient, confident but not overconfident, honest.
@@ -349,13 +360,42 @@ def _general_ai_offline_response(msg: str, owner_name: str, language: str) -> tu
         )
         return resp, "Science is the systematic study of the physical and natural world through observation and experiment."
 
-    # Math
-    pct_match = re.search(r'(\d+(?:\.\d+)?)\s*(%)\s*(?:of|को|का)\s*(\d+(?:\.\d+)?)', ml)
-    if pct_match:
-        pct = float(pct_match.group(1))
-        tot = float(pct_match.group(3))
-        res = (pct / 100.0) * tot
-        return f"🧮 **Calculation**\n\n{pct}% of {tot:,.2f} = **{res:,.2f}**", f"{pct} percent of {tot:.0f} is {res:,.2f}."
+    # Tell me when to enter
+    if any(k in ml for k in ["tell me when to enter", "when to enter", "when should i enter", "kahile entry"]):
+        resp = (
+            "⏳ **Entry Monitoring**\n\n"
+            "अहिले live background notification उपलब्ध छैन, तर तपाईंले chart check गर्दा म तत्काल live data अनुसार setup evaluate गरेर **ENTRY READY** inform गर्नेछु।\n\n"
+            "**Key conditions required for Entry:**\n"
+            "1. Liquidity sweep (BSL/SSL)\n"
+            "2. BOS / CHOCH structure shift\n"
+            "3. Strong confirmation candle (Hammer, Engulfing)\n"
+            "4. Valid retest with 1:2+ R:R"
+        )
+        return resp, "Currently background alert is offline, but I evaluate setup instantly on chart check."
+
+    # Why wait
+    if any(k in ml for k in ["why wait", "kina wait", "kin wait", "why not enter"]):
+        resp = (
+            "🟡 **Why WAIT? (किन पर्खने?)**\n\n"
+            "अहिले trade नलिनुको मुख्य कारणहरू:\n"
+            "1. **Price Range को बीचमा छ**: Risk/Reward राम्रो छैन।\n"
+            "2. **Liquidity Sweep भएको छैन**: Stop hunt बाँकी छ।\n"
+            "3. **BOS Confirmation छैन**: Market अझै clear direction मा छैन।\n"
+            "4. **Volume Weak छ**: Institutional participation स्पष्ट छैन।\n\n"
+            "💡 *Disciplined trader ले setup बन्ने प्रतीक्षा गर्छ, trade force गर्दैन।*"
+        )
+        return resp, "Market is currently in equilibrium without clear liquidity sweep. Waiting is recommended to preserve capital."
+
+    # Where is liquidity
+    if any(k in ml for k in ["where is liquidity", "liquidity kaha cha", "liquidity kasto"]):
+        resp = (
+            "💧 **Liquidity Analysis (लिक्विडिटी स्तरहरू)**\n\n"
+            "1. **Buy-Side Liquidity (BSL)**: Recent Swing High र Equal Highs (EQH) भन्दा माथि Stop orders को cluster हुन्छ।\n"
+            "2. **Sell-Side Liquidity (SSL)**: Recent Swing Low र Equal Lows (EQL) भन्दा तल Stop orders को cluster हुन्छ।\n"
+            "3. **Dealing Range**: Price Equilibrium भन्दा माथि Premium मा छ कि तल Discount मा छ ध्यान दिनुहोस्।\n\n"
+            "Market ले पहिले BSL/SSL sweep गरेर मात्र directional move दिन्छ।"
+        )
+        return resp, "Buy-side liquidity rests above swing highs, and Sell-side liquidity rests below swing lows."
 
     # Fallback Conversational Response
     resp = (

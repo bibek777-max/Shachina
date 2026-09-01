@@ -6,12 +6,11 @@ import {
   RotateCcw,
   Maximize2,
   Minimize2,
-  Layers,
   Sparkles,
-  TrendingUp,
-  Activity,
   PenTool,
   Trash2,
+  TrendingUp,
+  Activity,
 } from 'lucide-react';
 
 interface FinancialChartProps {
@@ -47,11 +46,10 @@ export const FinancialChart: React.FC<FinancialChartProps> = ({
   const [showMa50, setShowMa50] = useState(true);
   const [showEma9, setShowEma9] = useState(false);
   const [showVolume, setShowVolume] = useState(true);
-  const [showRsi, setShowRsi] = useState(false);
   const [showAnnotations, setShowAnnotations] = useState(true);
 
   // Manual Drawing Tools
-  const [drawingTool, setDrawingTool] = useState<'none' | 'hline' | 'trendline'>('none');
+  const [drawingTool, setDrawingTool] = useState<'none' | 'hline'>('none');
   const [manualLines, setManualLines] = useState<Array<{ yPrice: number; label: string }>>([]);
 
   const timeframes: Timeframe[] = ['1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w'];
@@ -103,15 +101,13 @@ export const FinancialChart: React.FC<FinancialChartProps> = ({
     const height = rect.height;
 
     // Background
-    ctx.fillStyle = '#080d1a';
+    ctx.fillStyle = '#060a12';
     ctx.fillRect(0, 0, width, height);
 
     // Layout splits
-    const subchartHeight = showRsi ? height * 0.16 : 0;
-    const volumeHeight = showVolume ? height * 0.14 : 0;
-    const priceChartHeight = height - volumeHeight - subchartHeight - 30;
-    const rightMargin = 75;
-    const bottomMargin = 25;
+    const volumeHeight = showVolume ? Math.max(50, height * 0.16) : 0;
+    const priceChartHeight = height - volumeHeight - 30;
+    const rightMargin = 120; // Expanded to fit clear price badges like "ENTRY: NPR 436.58"
     const chartWidth = width - rightMargin;
 
     // Visible candle window
@@ -165,10 +161,10 @@ export const FinancialChart: React.FC<FinancialChartProps> = ({
     };
 
     const candleSpacing = chartWidth / visibleCandles.length;
-    const candleWidth = Math.max(2, candleSpacing * 0.7);
+    const candleWidth = Math.max(3, candleSpacing * 0.72);
 
     // ── 1. Grid & Price Axis ──────────────────────────────────────────────────
-    ctx.strokeStyle = '#121c2e';
+    ctx.strokeStyle = '#0f172a';
     ctx.lineWidth = 1;
 
     const gridSteps = 6;
@@ -182,40 +178,49 @@ export const FinancialChart: React.FC<FinancialChartProps> = ({
       ctx.stroke();
 
       ctx.fillStyle = '#64748b';
-      ctx.font = '10px JetBrains Mono, monospace';
+      ctx.font = '11px JetBrains Mono, monospace';
       ctx.textAlign = 'left';
-      ctx.fillText(price.toFixed(2), chartWidth + 8, y + 3);
+      ctx.fillText(`NPR ${price.toFixed(2)}`, chartWidth + 8, y + 4);
     }
 
-    // ── 2. Shachina Programmatic Zones ────────────────────────────────────────
+    // ── 2. Shachina Programmatic Zones (FVG, Order Block, Supply, Demand) ─────
     if (showAnnotations && annotations?.zones) {
       annotations.zones.forEach((z) => {
         const yTop = getY(z.top);
         const yBottom = getY(z.bottom);
         const zHeight = Math.abs(yBottom - yTop);
 
-        ctx.fillStyle =
-          z.type === 'SUPPLY'
-            ? 'rgba(239, 68, 68, 0.10)'
-            : z.type === 'DEMAND'
-            ? 'rgba(16, 185, 129, 0.10)'
-            : 'rgba(6, 182, 212, 0.12)';
+        if (z.type === 'ORDER_BLOCK') {
+          ctx.fillStyle = z.label.toLowerCase().includes('bullish')
+            ? 'rgba(16, 185, 129, 0.14)'
+            : 'rgba(239, 68, 68, 0.14)';
+        } else if (z.type === 'FVG') {
+          ctx.fillStyle = z.label.toLowerCase().includes('bullish')
+            ? 'rgba(6, 182, 212, 0.14)'
+            : 'rgba(244, 63, 94, 0.14)';
+        } else if (z.type === 'SUPPLY') {
+          ctx.fillStyle = 'rgba(239, 68, 68, 0.12)';
+        } else if (z.type === 'DEMAND') {
+          ctx.fillStyle = 'rgba(16, 185, 129, 0.12)';
+        } else {
+          ctx.fillStyle = 'rgba(56, 189, 248, 0.12)';
+        }
+
         ctx.fillRect(0, Math.min(yTop, yBottom), chartWidth, Math.max(zHeight, 4));
 
-        ctx.fillStyle =
-          z.type === 'SUPPLY' ? '#f87171' : z.type === 'DEMAND' ? '#34d399' : '#38bdf8';
+        ctx.fillStyle = z.type === 'SUPPLY' || z.label.toLowerCase().includes('bearish') ? '#f87171' : '#34d399';
         ctx.font = 'bold 9px JetBrains Mono, monospace';
         ctx.fillText(`■ ${z.label}`, 12, Math.min(yTop, yBottom) + 12);
       });
     }
 
-    // ── 3. Shachina Fibonacci Grid ────────────────────────────────────────────
+    // ── 3. Fibonacci Grid ─────────────────────────────────────────────────────
     if (showAnnotations && annotations?.fibonacci_levels) {
       annotations.fibonacci_levels.forEach((fib) => {
         const y = getY(fib.price);
         if (y >= 0 && y <= priceChartHeight) {
           ctx.beginPath();
-          ctx.setLineDash([4, 4]);
+          ctx.setLineDash([3, 3]);
           ctx.strokeStyle = 'rgba(245, 158, 11, 0.35)';
           ctx.moveTo(0, y);
           ctx.lineTo(chartWidth, y);
@@ -223,13 +228,13 @@ export const FinancialChart: React.FC<FinancialChartProps> = ({
           ctx.setLineDash([]);
 
           ctx.fillStyle = '#f59e0b';
-          ctx.font = '8px JetBrains Mono, monospace';
+          ctx.font = '9px JetBrains Mono, monospace';
           ctx.fillText(`Fib ${fib.label} (${fib.price.toFixed(1)})`, 8, y - 3);
         }
       });
     }
 
-    // ── 4. Candlesticks ───────────────────────────────────────────────────────
+    // ── 4. Candlesticks (Ultra-clear bodies & wicks) ───────────────────────────
     visibleCandles.forEach((c, idx) => {
       const x = idx * candleSpacing + candleSpacing / 2;
       const openY = getY(c.open);
@@ -242,7 +247,7 @@ export const FinancialChart: React.FC<FinancialChartProps> = ({
 
       // Wick
       ctx.strokeStyle = color;
-      ctx.lineWidth = 1.2;
+      ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.moveTo(x, highY);
       ctx.lineTo(x, lowY);
@@ -251,34 +256,35 @@ export const FinancialChart: React.FC<FinancialChartProps> = ({
       // Body
       ctx.fillStyle = color;
       const bodyY = Math.min(openY, closeY);
-      const bodyHeight = Math.max(1.5, Math.abs(closeY - openY));
+      const bodyHeight = Math.max(2, Math.abs(closeY - openY));
       ctx.fillRect(x - candleWidth / 2, bodyY, candleWidth, bodyHeight);
     });
 
-    // ── 5. Candlestick Pattern Badges ─────────────────────────────────────────
+    // ── 5. Candlestick Pattern Badges (Clean, non-overlapping) ────────────────
     if (showAnnotations && annotations?.patterns) {
-      annotations.patterns.forEach((pb) => {
+      annotations.patterns.slice(-4).forEach((pb) => {
         const relIdx = pb.candle_index - startIndex;
         if (relIdx >= 0 && relIdx < visibleCandles.length) {
           const x = relIdx * candleSpacing + candleSpacing / 2;
           const c = visibleCandles[relIdx];
           const isBull = pb.direction === 'BULLISH';
-          const badgeY = isBull ? getY(c.low) + 16 : getY(c.high) - 12;
+          const badgeY = isBull ? getY(c.low) + 18 : getY(c.high) - 14;
 
-          ctx.fillStyle = isBull ? '#064e3b' : '#7f1d1d';
+          ctx.fillStyle = isBull ? 'rgba(6, 78, 59, 0.9)' : 'rgba(127, 29, 29, 0.9)';
           ctx.strokeStyle = isBull ? '#10b981' : '#ef4444';
           ctx.lineWidth = 1;
 
-          const textWidth = ctx.measureText(pb.pattern).width + 8;
+          const label = pb.pattern;
+          const textWidth = ctx.measureText(label).width + 10;
           ctx.beginPath();
-          ctx.roundRect(x - textWidth / 2, badgeY - 8, textWidth, 14, 3);
+          ctx.roundRect(x - textWidth / 2, badgeY - 8, textWidth, 16, 4);
           ctx.fill();
           ctx.stroke();
 
           ctx.fillStyle = '#ffffff';
-          ctx.font = 'bold 8px JetBrains Mono, monospace';
+          ctx.font = 'bold 9px JetBrains Mono, monospace';
           ctx.textAlign = 'center';
-          ctx.fillText(pb.pattern, x, badgeY + 2);
+          ctx.fillText(label, x, badgeY + 3);
           ctx.textAlign = 'left';
         }
       });
@@ -309,13 +315,13 @@ export const FinancialChart: React.FC<FinancialChartProps> = ({
     if (showMa50) drawLineSeries(visibleMa50, '#f59e0b', 1.5);
     if (showEma9) drawLineSeries(visibleEma9, '#a855f7', 1.5);
 
-    // ── 7. Shachina Execution Levels (Entry, SL, Targets) ─────────────────────
+    // ── 7. Programmatic Horizontal Execution Levels with Exact Prices ─────────
     if (showAnnotations && annotations) {
       // Support lines
       annotations.support_lines?.forEach((sl) => {
         const y = getY(sl.price);
         ctx.beginPath();
-        ctx.setLineDash([3, 3]);
+        ctx.setLineDash([4, 4]);
         ctx.strokeStyle = sl.color || '#10b981';
         ctx.lineWidth = 1.2;
         ctx.moveTo(0, y);
@@ -325,14 +331,14 @@ export const FinancialChart: React.FC<FinancialChartProps> = ({
 
         ctx.fillStyle = '#10b981';
         ctx.font = 'bold 9px JetBrains Mono, monospace';
-        ctx.fillText(`SUP: ${sl.price.toFixed(1)}`, chartWidth + 6, y + 3);
+        ctx.fillText(`SUP: NPR ${sl.price.toFixed(2)}`, chartWidth + 6, y + 3);
       });
 
       // Resistance lines
       annotations.resistance_lines?.forEach((rl) => {
         const y = getY(rl.price);
         ctx.beginPath();
-        ctx.setLineDash([3, 3]);
+        ctx.setLineDash([4, 4]);
         ctx.strokeStyle = rl.color || '#ef4444';
         ctx.lineWidth = 1.2;
         ctx.moveTo(0, y);
@@ -342,44 +348,44 @@ export const FinancialChart: React.FC<FinancialChartProps> = ({
 
         ctx.fillStyle = '#ef4444';
         ctx.font = 'bold 9px JetBrains Mono, monospace';
-        ctx.fillText(`RES: ${rl.price.toFixed(1)}`, chartWidth + 6, y + 3);
+        ctx.fillText(`RES: NPR ${rl.price.toFixed(2)}`, chartWidth + 6, y + 3);
       });
 
-      // Entry line
+      // ENTRY LINE: Glowing Cyan level with exact price
       if (annotations.entry_line) {
         const y = getY(annotations.entry_line.price);
         ctx.beginPath();
         ctx.strokeStyle = '#00f2fe';
-        ctx.lineWidth = 2.0;
+        ctx.lineWidth = 2.2;
         ctx.moveTo(0, y);
         ctx.lineTo(chartWidth, y);
         ctx.stroke();
 
         ctx.fillStyle = '#00f2fe';
-        ctx.fillRect(chartWidth + 2, y - 8, 70, 16);
+        ctx.fillRect(chartWidth + 2, y - 9, 115, 18);
         ctx.fillStyle = '#000000';
         ctx.font = 'bold 9px JetBrains Mono, monospace';
-        ctx.fillText(`ENTRY`, chartWidth + 6, y + 4);
+        ctx.fillText(`ENTRY: NPR ${annotations.entry_line.price.toFixed(2)}`, chartWidth + 6, y + 3);
       }
 
-      // Stop Loss line
+      // STOP LOSS LINE: Crimson level with exact price
       if (annotations.stop_loss_line) {
         const y = getY(annotations.stop_loss_line.price);
         ctx.beginPath();
         ctx.strokeStyle = '#f43f5e';
-        ctx.lineWidth = 2.0;
+        ctx.lineWidth = 2.2;
         ctx.moveTo(0, y);
         ctx.lineTo(chartWidth, y);
         ctx.stroke();
 
         ctx.fillStyle = '#f43f5e';
-        ctx.fillRect(chartWidth + 2, y - 8, 70, 16);
+        ctx.fillRect(chartWidth + 2, y - 9, 115, 18);
         ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 9px JetBrains Mono, monospace';
-        ctx.fillText(`STOP LOSS`, chartWidth + 4, y + 4);
+        ctx.fillText(`SL: NPR ${annotations.stop_loss_line.price.toFixed(2)}`, chartWidth + 6, y + 3);
       }
 
-      // Target lines
+      // TARGET LINES: TP1, TP2, TP3 with exact prices
       annotations.target_lines?.forEach((t, i) => {
         const y = getY(t.price);
         ctx.beginPath();
@@ -389,11 +395,11 @@ export const FinancialChart: React.FC<FinancialChartProps> = ({
         ctx.lineTo(chartWidth, y);
         ctx.stroke();
 
-        ctx.fillStyle = '#10b981';
-        ctx.fillRect(chartWidth + 2, y - 8, 70, 16);
+        ctx.fillStyle = i === 0 ? '#10b981' : i === 1 ? '#34d399' : '#6ee7b7';
+        ctx.fillRect(chartWidth + 2, y - 9, 115, 18);
         ctx.fillStyle = '#000000';
         ctx.font = 'bold 9px JetBrains Mono, monospace';
-        ctx.fillText(`TARGET ${i + 1}`, chartWidth + 6, y + 4);
+        ctx.fillText(`TP${i + 1}: NPR ${t.price.toFixed(2)}`, chartWidth + 6, y + 3);
       });
     }
 
@@ -421,18 +427,18 @@ export const FinancialChart: React.FC<FinancialChartProps> = ({
         const vHeight = vRatio * (volumeHeight - 12);
         const vY = volTop + (volumeHeight - 12) - vHeight;
 
-        ctx.fillStyle = c.is_bullish ? 'rgba(16, 185, 129, 0.35)' : 'rgba(239, 68, 68, 0.35)';
+        ctx.fillStyle = c.is_bullish ? 'rgba(16, 185, 129, 0.4)' : 'rgba(239, 68, 68, 0.4)';
         ctx.fillRect(x - candleWidth / 2, vY, candleWidth, vHeight);
       });
 
-      ctx.fillStyle = '#475569';
-      ctx.font = '9px JetBrains Mono, monospace';
-      ctx.fillText(`VOL: ${maxVolume.toLocaleString()}`, 8, volTop + 12);
+      ctx.fillStyle = '#64748b';
+      ctx.font = '10px JetBrains Mono, monospace';
+      ctx.fillText(`VOL: ${maxVolume.toLocaleString()}`, 8, volTop + 14);
     }
 
     // ── 10. Crosshair ─────────────────────────────────────────────────────────
     if (crosshairPos && crosshairPos.x < chartWidth && crosshairPos.y < priceChartHeight) {
-      ctx.strokeStyle = 'rgba(148, 163, 184, 0.4)';
+      ctx.strokeStyle = 'rgba(148, 163, 184, 0.45)';
       ctx.lineWidth = 1;
       ctx.setLineDash([2, 2]);
 
@@ -457,7 +463,6 @@ export const FinancialChart: React.FC<FinancialChartProps> = ({
     showMa50,
     showEma9,
     showVolume,
-    showRsi,
     showAnnotations,
     annotations,
     manualLines,
@@ -473,7 +478,7 @@ export const FinancialChart: React.FC<FinancialChartProps> = ({
     const y = e.clientY - rect.top;
     setCrosshairPos({ x, y });
 
-    const rightMargin = 75;
+    const rightMargin = 120;
     const chartWidth = rect.width - rightMargin;
     const visibleCount = Math.max(15, Math.min(candles.length, Math.floor(candles.length / zoomLevel)));
     const startIndex = Math.max(0, candles.length - visibleCount - offset);
@@ -494,7 +499,7 @@ export const FinancialChart: React.FC<FinancialChartProps> = ({
       const clickedPrice = maxPrice - (crosshairPos.y / priceChartHeight) * (maxPrice - minPrice);
       setManualLines((prev) => [
         ...prev,
-        { yPrice: clickedPrice, label: `Line @ ${clickedPrice.toFixed(2)}` },
+        { yPrice: clickedPrice, label: `Line @ NPR ${clickedPrice.toFixed(2)}` },
       ]);
       setDrawingTool('none');
     }
@@ -508,24 +513,24 @@ export const FinancialChart: React.FC<FinancialChartProps> = ({
   return (
     <div
       ref={containerRef}
-      className={`flex flex-col bg-[#0c1220] border border-[#1c2438] rounded-xl overflow-hidden shadow-2xl relative ${
+      className={`flex flex-col bg-[#070b14] border border-[#1a2337] rounded-xl overflow-hidden shadow-2xl relative ${
         isFullscreen ? 'fixed inset-0 z-50 rounded-none' : 'w-full h-full'
       }`}
     >
-      {/* ── Top Bar: Symbol Stats & Timeframe ──────────────────────────────── */}
-      <div className="p-2.5 bg-[#080d1a] border-b border-[#1c2438] flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
+      {/* ── Top Bar: Symbol Stats, Market Regime & Timeframes ──────────────── */}
+      <div className="p-2.5 bg-[#050810] border-b border-[#161f33] flex flex-wrap items-center justify-between gap-2 text-xs font-mono select-none">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5">
-            <span className="font-extrabold text-sm text-cyan-300">{symbol}</span>
+            <span className="font-extrabold text-sm text-cyan-300 tracking-wide">{symbol}</span>
             <span className="text-[10px] text-slate-400">({currency})</span>
           </div>
 
           {latestCandle && (
             <div className="flex items-center gap-2 text-xs">
-              <span className="font-bold text-white">LTP: {latestCandle.close.toFixed(2)}</span>
+              <span className="font-bold text-white">LTP: NPR {latestCandle.close.toFixed(2)}</span>
               <span
-                className={`font-semibold px-1.5 py-0.5 rounded text-[11px] ${
-                  priceChange >= 0 ? 'bg-emerald-950 text-emerald-400' : 'bg-rose-950 text-rose-400'
+                className={`font-semibold px-2 py-0.5 rounded text-[11px] ${
+                  priceChange >= 0 ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-800' : 'bg-rose-950/80 text-rose-400 border border-rose-800'
                 }`}
               >
                 {priceChange >= 0 ? '+' : ''}
@@ -536,20 +541,20 @@ export const FinancialChart: React.FC<FinancialChartProps> = ({
 
           {/* Shachina Drawing Badge */}
           {annotations && (
-            <span className="flex items-center gap-1 text-[10px] bg-cyan-950/80 text-cyan-300 border border-cyan-700/60 px-2 py-0.5 rounded-full font-bold animate-pulse">
-              <Sparkles className="w-3 h-3 text-cyan-400" />
+            <span className="flex items-center gap-1 text-[10px] bg-cyan-950/90 text-cyan-300 border border-cyan-600/70 px-2 py-0.5 rounded-full font-bold">
+              <Sparkles className="w-3 h-3 text-cyan-400 animate-spin" />
               Shachina Drawn
             </span>
           )}
         </div>
 
         {/* Timeframe Switcher */}
-        <div className="flex items-center bg-[#050811] rounded-lg p-0.5 border border-[#1e293b]">
+        <div className="flex items-center bg-[#090d18] rounded-lg p-0.5 border border-[#1e293b]">
           {timeframes.map((tf) => (
             <button
               key={tf}
               onClick={() => onTimeframeChange(tf)}
-              className={`px-2 py-1 rounded text-[11px] font-bold transition-all ${
+              className={`px-2.5 py-1 rounded text-[11px] font-bold transition-all ${
                 timeframe === tf
                   ? 'bg-cyan-500 text-black font-extrabold shadow-sm'
                   : 'text-slate-400 hover:text-slate-200'
@@ -635,7 +640,7 @@ export const FinancialChart: React.FC<FinancialChartProps> = ({
 
       {/* ── Active Candle Bar stats on hover ──────────────────────────────── */}
       {hoveredCandle && (
-        <div className="px-3 py-1 bg-[#050811] text-[10px] font-mono text-slate-400 flex items-center gap-3 border-b border-[#141c2e]">
+        <div className="px-3 py-1 bg-[#04060c] text-[11px] font-mono text-slate-400 flex items-center gap-4 border-b border-[#141c2e]">
           <span>O: <strong className="text-white">{hoveredCandle.open.toFixed(2)}</strong></span>
           <span>H: <strong className="text-white">{hoveredCandle.high.toFixed(2)}</strong></span>
           <span>L: <strong className="text-white">{hoveredCandle.low.toFixed(2)}</strong></span>
@@ -664,7 +669,7 @@ export const FinancialChart: React.FC<FinancialChartProps> = ({
       </div>
 
       {/* ── Zoom Controls Footer ───────────────────────────────────────────── */}
-      <div className="p-1.5 bg-[#080d1a] border-t border-[#1c2438] flex items-center justify-between text-[10px] font-mono text-slate-400">
+      <div className="p-1.5 bg-[#050810] border-t border-[#161f33] flex items-center justify-between text-[10px] font-mono text-slate-400">
         <div className="flex items-center gap-2">
           <span>Candles: {candles.length}</span>
           <span>•</span>
