@@ -245,17 +245,36 @@ async def _search_web_live(query: str, max_results: int = 4) -> tuple[str, List[
         pass
 
     if not sources:
-        # Fallback query
+        # Fallback: scrape DuckDuckGo HTML for real live snippets
+        try:
+            import html as _html
+            async with httpx.AsyncClient(timeout=6.0) as client:
+                res = await client.post(
+                    "https://html.duckduckgo.com/html/", data={"q": query},
+                    headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+                )
+                link_ms = re.findall(r'<a[^>]+class="result__a"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)</a>', res.text)
+                snip_ms = re.findall(r'<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)</a>', res.text)
+                for i in range(min(len(link_ms), len(snip_ms), max_results)):
+                    href, raw_t = link_ms[i]
+                    title = _html.unescape(re.sub(r'<[^>]+>', '', raw_t).strip())
+                    snippet = _html.unescape(re.sub(r'<[^>]+>', '', snip_ms[i]).strip())
+                    if title and snippet:
+                        sources.append({"title": title, "url": href.strip() or f"https://duckduckgo.com/?q={query.replace(' ','+')}", "snippet": snippet})
+        except Exception:
+            pass
+
+    if not sources:
         sources.append({
-            "title": f"Live Search: {clean_q}",
-            "url": f"https://duckduckgo.com/?q={clean_q.replace(' ', '+')}",
-            "snippet": f"Real-time indexed search results for '{clean_q}'."
+            "title": f"Search: {query}",
+            "url": f"https://duckduckgo.com/?q={query.replace(' ', '+')}",
+            "snippet": f"Live search was attempted for '{query}'."
         })
 
-    summary_lines = ["\n[REAL-TIME WEB SEARCH RESULTS & VERIFIED SOURCES]:"]
+    summary_lines = ["\n[REAL-TIME WEB SEARCH RESULTS — LIVE VERIFIED SOURCES]:"]
     for i, s in enumerate(sources[:max_results], 1):
         summary_lines.append(f"{i}. **{s['title']}**: {s['snippet']} (Source: {s['url']})")
-    summary_lines.append("\nUse these verified live search results to answer accurately and cite sources.\n")
+    summary_lines.append("\nUse the above live search results to answer accurately. Cite source URLs in your response.\n")
 
     return "\n".join(summary_lines), sources[:max_results]
 
@@ -366,240 +385,102 @@ async def _call_openai(
     return None
 
 
-# ─── Offline General AI & Knowledge Engine ────────────────────────────────────
-def _general_ai_offline_response(msg: str, owner_name: str, language: str) -> tuple[str, str]:
+# ─── Universal Knowledge Engine (Wikipedia + Math — Primary Fallback) ──────────
+async def _universal_knowledge_answer(msg: str, owner_name: str) -> Optional[tuple[str, str]]:
+    """
+    Truly general-purpose knowledge engine — handles ANY topic dynamically.
+    No hardcoded topic-specific answers. Uses Wikipedia + DuckDuckGo HTML.
+    """
+    import urllib.parse
+    import html as _html
     ml = msg.lower().strip()
-    ne = language == "ne"
 
-    # Affection & Warmth
-    if any(w in ml for w in ["love you", "i love u", "माया", "love u"]):
-        resp = f"Aww, that's sweet, {owner_name}! ❤️ I'm always here to chat, help you think through things, and support your trading and personal goals."
-        return resp, f"Aww, that's sweet, {owner_name}. I'm always here to support your goals."
+    # 1. Percentage calculation (e.g. "25% of 840")
+    pct_m = re.search(r'(\d+(?:\.\d+)?)\s*%\s*(?:of)?\s*(\d+(?:\.\d+)?)', ml)
+    if pct_m:
+        pct, val = float(pct_m.group(1)), float(pct_m.group(2))
+        result = (pct / 100.0) * val
+        fmt: Any = int(result) if result == int(result) else round(result, 4)
+        return f"{pct}% of {val:g} = **{fmt}**", f"{pct} percent of {val} is {fmt}."
 
+    # 2. Simple arithmetic (e.g. "2+2", "12*15", "100/4")
+    if any(op in msg for op in ['+', '-', '*', '/', '^']):
+        arith_m = re.match(r'^\s*([\d\.\s\+\-\*\/\(\)\^]+)\s*[\?=]?\s*$', msg)
+        if arith_m:
+            try:
+                expr = msg.replace('^', '**').replace('?', '').replace('=', '').strip()
+                if re.match(r'^[\d\.\s\+\-\*\/\(\)]+$', expr):
+                    ans = eval(expr)  # safe: only digits + operators
+                    fmt = int(ans) if isinstance(ans, float) and ans.is_integer() else round(ans, 6)
+                    return f"**{fmt}**", f"The answer is {fmt}."
+            except Exception:
+                pass
+
+    # 3. Wikipedia dynamic lookup for ANY topic
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as wiki_client:
+            clean_q = re.sub(
+                r'^(what is|what are|who is|who was|who invented|explain|define|tell me about|describe|how does|why is|what was)\s+',
+                '', ml, flags=re.I
+            ).strip(' ?.')
+            clean_q = clean_q or ml
+            import urllib.parse as _up
+            sr_url = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={_up.quote(clean_q)}&format=json&utf8="
+            sr_data = (await wiki_client.get(sr_url, headers={"User-Agent": "ShachinaAI/2.0"})).json()
+            hits = sr_data.get("query", {}).get("search", [])
+            if hits:
+                top_title = hits[0]["title"]
+                sum_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{_up.quote(top_title)}"
+                sum_data = (await wiki_client.get(sum_url, headers={"User-Agent": "ShachinaAI/2.0"})).json()
+                extract = sum_data.get("extract", "")
+                page_url = sum_data.get("content_urls", {}).get("desktop", {}).get("page", "")
+                if extract and len(extract) > 80:
+                    trimmed = extract if len(extract) <= 1200 else extract[:1200].rsplit('.', 1)[0] + '.'
+                    src_note = f"\n\n*(Source: [Wikipedia — {top_title}]({page_url}))*" if page_url else ""
+                    return trimmed + src_note, trimmed[:200]
+    except Exception:
+        pass
+
+    # 4. DuckDuckGo HTML snippet fallback for live/current queries
+    try:
+        import html as _html
+        async with httpx.AsyncClient(timeout=5.0) as ddg_client:
+            res = await ddg_client.post(
+                "https://html.duckduckgo.com/html/", data={"q": msg},
+                headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"}
+            )
+            raw_snips = re.findall(r'<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)</a>', res.text)
+            clean_snips = [_html.unescape(re.sub(r'<[^>]+>', '', s).strip()) for s in raw_snips[:3] if s.strip()]
+            if clean_snips:
+                return "\n\n".join(clean_snips), clean_snips[0][:200]
+    except Exception:
+        pass
+
+    return None
+
+
+# ─── Offline General AI — Minimal Conversation Fallback ───────────────────────
+def _general_ai_offline_response(msg: str, owner_name: str, language: str) -> tuple[str, str]:
+    """
+    Minimal synchronous fallback — used ONLY when ALL AI APIs and knowledge engines fail.
+    Handles only basic conversational identity responses.
+    """
+    ml = msg.lower().strip()
+    if any(w in ml for w in ["love you", "i love u", "माया", "love u", "i love you"]):
+        r = f"Aww, that's sweet! ❤️ I'm always here for you, {owner_name}."
+        return r, r
     if any(w in ml for w in ["who are you", "what is your name", "तिम्रो नाम"]):
-        resp = f"I'm **Shachina** — your personal AI assistant and trading intelligence partner built specifically for you, {owner_name}."
-        return resp, f"I am Shachina, your personal AI assistant and quantitative trading partner."
-
-    # Data Analysis
-    if "data analysis" in ml:
-        resp = (
-            "📊 **Data Analysis** is the systematic process of cleaning, transforming, and modeling raw data to discover actionable insights, identify trends, and inform strategic decisions.\n\n"
-            "**Core Stages:**\n"
-            "1. **Collection**: Gathering structured/unstructured data.\n"
-            "2. **Cleaning**: Handling missing values, outliers, and normalization.\n"
-            "3. **Exploratory Data Analysis (EDA)**: Statistical summaries and visual patterns.\n"
-            "4. **Modeling & Inference**: Machine learning, hypothesis testing, and quantitative forecasting.\n"
-            "5. **Visualization**: Interactive dashboards and clear reporting."
-        )
-        return resp, "Data analysis is the systematic process of cleaning, analyzing, and modeling data to discover actionable insights."
-
-    # Science
-    if "science" in ml:
-        resp = (
-            "🔬 **Science** is the systematic enterprise that builds and organizes empirical knowledge in the form of testable explanations and predictions about the universe.\n\n"
-            "- **Empirical Observation**: Testing hypotheses with real-world evidence.\n"
-            "- **Scientific Method**: Observation → Hypothesis → Experimentation → Conclusion → Peer Review.\n"
-            "- **Branches**: Natural Sciences (Physics, Chemistry, Biology), Formal Sciences (Math, Logic), and Applied Sciences (Engineering, Computer Science)."
-        )
-        return resp, "Science is the systematic study of the physical and natural world through observation and experiment."
-
-    # Tell me when to enter
-    if any(k in ml for k in ["tell me when to enter", "when to enter", "when should i enter", "kahile entry"]):
-        resp = (
-            "⏳ **Entry Monitoring**\n\n"
-            "अहिले live background notification उपलब्ध छैन, तर तपाईंले chart check गर्दा म तत्काल live data अनुसार setup evaluate गरेर **ENTRY READY** inform गर्नेछु।\n\n"
-            "**Key conditions required for Entry:**\n"
-            "1. Liquidity sweep (BSL/SSL)\n"
-            "2. BOS / CHOCH structure shift\n"
-            "3. Strong confirmation candle (Hammer, Engulfing)\n"
-            "4. Valid retest with 1:2+ R:R"
-        )
-        return resp, "Currently background alert is offline, but I evaluate setup instantly on chart check."
-
-    # Why wait
-    if any(k in ml for k in ["why wait", "kina wait", "kin wait", "why not enter"]):
-        resp = (
-            "🟡 **Why WAIT? (किन पर्खने?)**\n\n"
-            "अहिले trade नलिनुको मुख्य कारणहरू:\n"
-            "1. **Price Range को बीचमा छ**: Risk/Reward राम्रो छैन।\n"
-            "2. **Liquidity Sweep भएको छैन**: Stop hunt बाँकी छ।\n"
-            "3. **BOS Confirmation छैन**: Market अझै clear direction मा छैन।\n"
-            "4. **Volume Weak छ**: Institutional participation स्पष्ट छैन।\n\n"
-            "💡 *Disciplined trader ले setup बन्ने प्रतीक्षा गर्छ, trade force गर्दैन।*"
-        )
-        return resp, "Market is currently in equilibrium without clear liquidity sweep. Waiting is recommended to preserve capital."
-
-    # Where is liquidity
-    if any(k in ml for k in ["where is liquidity", "liquidity kaha cha", "liquidity kasto"]):
-        resp = (
-            "💧 **Liquidity Analysis (लिक्विडिटी स्तरहरू)**\n\n"
-            "1. **Buy-Side Liquidity (BSL)**: Recent Swing High र Equal Highs (EQH) भन्दा माथि Stop orders को cluster हुन्छ।\n"
-            "2. **Sell-Side Liquidity (SSL)**: Recent Swing Low र Equal Lows (EQL) भन्दा तल Stop orders को cluster हुन्छ।\n"
-            "3. **Dealing Range**: Price Equilibrium भन्दा माथि Premium मा छ कि तल Discount मा छ ध्यान दिनुहोस्।\n\n"
-            "Market ले पहिले BSL/SSL sweep गरेर मात्र directional move दिन्छ।"
-        )
-        return resp, "Buy-side liquidity rests above swing highs, and Sell-side liquidity rests below swing lows."
-
-    # Python / Coding
-    if any(k in ml for k in ["python", "code", "coding", "script", "function", "javascript", "typescript", "html", "css", "sql", "algorithm"]):
-        resp = (
-            f"💻 **Shachina Code Engine — Python & Modern Engineering**\n\n"
-            f"Here is a robust, modular implementation demonstrating clean architecture and async execution:\n\n"
-            f"```python\n"
-            f"import asyncio\n"
-            f"import httpx\n"
-            f"from typing import Dict, Any, Optional\n\n"
-            f"class MarketDataClient:\n"
-            f"    def __init__(self, base_url: str = 'https://api.market.com'):\n"
-            f"        self.base_url = base_url\n"
-            f"        self.client = httpx.AsyncClient(timeout=10.0)\n\n"
-            f"    async def fetch_ticker(self, symbol: str) -> Optional[Dict[str, Any]]:\n"
-            f"        \"\"\"Fetches verified ticker data asynchronously with error handling.\"\"\"\n"
-            f"        try:\n"
-            f"            response = await self.client.get(f'{{self.base_url}}/ticker/{{symbol}}')\n"
-            f"            response.raise_for_status()\n"
-            f"            return response.json()\n"
-            f"        except Exception as err:\n"
-            f"            print(f'[Error fetching {{symbol}}]: {{err}}')\n"
-            f"            return None\n\n"
-            f"async def main():\n"
-            f"    client = MarketDataClient()\n"
-            f"    data = await client.fetch_ticker('NABIL')\n"
-            f"    print('Market Data:', data)\n\n"
-            f"if __name__ == '__main__':\n"
-            f"    asyncio.run(main())\n"
-            f"```\n\n"
-            f"**Key Engineering Best Practices Applied:**\n"
-            f"• **Async I/O (`httpx.AsyncClient`)**: Prevents event loop blocking during network requests.\n"
-            f"• **Type Annotations**: Ensures type safety with `Dict`, `Any`, and `Optional`.\n"
-            f"• **Clean Error Handling**: Catches network interruptions gracefully."
-        )
-        return resp, "Here is a clean asynchronous Python implementation with proper error handling."
-
-    # Thermodynamics & Physics laws
-    if "thermodynamic" in ml:
-        resp = (
-            "Thermodynamics is the branch of physics that deals with heat, work, and temperature, and their relation to energy, entropy, and the physical properties of matter.\n\n"
-            "In simple terms, it explains what happens when energy moves from one place or form to another. For example, when you heat water in a kettle, thermal energy enters the water and raises its temperature until it turns to steam. Thermodynamics provides the laws that govern such transformations.\n\n"
-            "The four fundamental laws of thermodynamics are:\n"
-            "• **Zeroth Law**: Defines temperature and thermal equilibrium — if system A is in equilibrium with B and C, then B and C are in equilibrium with each other.\n"
-            "• **First Law**: Conservation of energy — energy cannot be created or destroyed, only transferred ($\\Delta U = Q - W$).\n"
-            "• **Second Law**: Entropy of an isolated system always increases, explaining why heat naturally flows from hotter to cooler bodies and why natural processes are irreversible.\n"
-            "• **Third Law**: The entropy of a system approaches a constant minimum value as temperature approaches absolute zero ($0\\text{ K}$).\n\n"
-            "Let me know if you would like me to explain any specific law in detail or with everyday real-world examples!"
-        )
-        return resp, "Thermodynamics is the branch of physics that studies heat, work, energy, and entropy transfer."
-
-    # Entropy
-    if "entropy" in ml:
-        resp = (
-            "Entropy is a fundamental scientific concept associated with the state of disorder, randomness, or uncertainty in a system, and it measures the amount of thermal energy unavailable for useful work.\n\n"
-            "In everyday terms, entropy explains why heat naturally spreads out rather than concentrates, why an ice cube melts in a warm room, and why a dropped glass shatters rather than spontaneously putting itself back together (the thermodynamic arrow of time)."
-        )
-        return resp, "Entropy is a measure of the disorder or energy dispersal in a thermodynamic system."
-
-    # Gravity
-    if "gravity" in ml:
-        resp = (
-            "Gravity is the natural force of attraction between objects with mass or energy.\n\n"
-            "On Earth, gravity gives weight to objects and causes them to fall to the ground at approximately $9.8\\text{ m/s}^2$. In astrophysics, gravity governs the orbits of the Moon around Earth, planets around the Sun, and holds galaxies together. In modern physics, Einstein's General Relativity describes gravity not merely as a force, but as the curvature of spacetime caused by mass and energy."
-        )
-        return resp, "Gravity is the fundamental force of attraction between objects with mass, curving spacetime around heavy bodies."
-
-    # Einstein
-    if "einstein" in ml:
-        resp = (
-            "Albert Einstein (1879–1955) was a renowned theoretical physicist widely regarded as one of the greatest scientists in history.\n\n"
-            "He is most famous for:\n"
-            "• **Theory of Relativity**: Special Relativity (1905) and General Relativity (1915), which revolutionized our understanding of space, time, and gravity.\n"
-            "• **Mass-Energy Equivalence**: The iconic equation $E = mc^2$.\n"
-            "• **Photoelectric Effect**: For which he won the 1921 Nobel Prize in Physics, laying the foundation for quantum theory."
-        )
-        return resp, "Albert Einstein was the physicist who formulated the theory of relativity and mass energy equivalence."
-
-    # Simple Arithmetic / Math detection
-    math_match = re.match(r'^\s*(\d+)\s*([\+\-\*\/\^])\s*(\d+)\s*\??\s*$', msg)
-    if math_match:
-        a = float(math_match.group(1))
-        op = math_match.group(2)
-        b = float(math_match.group(3))
-        ans = None
-        if op == '+': ans = a + b
-        elif op == '-': ans = a - b
-        elif op == '*': ans = a * b
-        elif op == '/': ans = a / b if b != 0 else "undefined (division by zero)"
-        elif op == '^': ans = a ** b
-        if ans is not None:
-            formatted_ans = int(ans) if isinstance(ans, float) and ans.is_integer() else ans
-            return f"{formatted_ans}", f"The answer is {formatted_ans}."
-
-    # Quantum Mechanics
-    if any(k in ml for k in ["quantum mechanics", "quantum physics", "superposition"]):
-        resp = (
-            "Quantum mechanics is the fundamental theory in physics that describes nature at the atomic and subatomic scale.\n\n"
-            "Unlike classical mechanics, quantum mechanics shows that:\n"
-            "1. **Wave-Particle Duality**: Particles like electrons and photons exhibit properties of both waves and particles.\n"
-            "2. **Superposition**: A quantum state can exist in multiple possible configurations simultaneously until measured (described by the wave function $\\psi$).\n"
-            "3. **Entanglement**: Two or more particles can be linked such that the state of one instantaneously affects the state of the other, even across vast distances."
-        )
-        return resp, "Quantum mechanics describes the fundamental behavior of matter and energy at atomic scales."
-
-    # Python / Coding
-    if any(k in ml for k in ["python", "code", "coding", "script", "function", "javascript", "typescript", "html", "css", "sql"]):
-        resp = (
-            "Here is a clean, modular Python implementation with proper typing and error handling:\n\n"
-            "```python\n"
-            "import asyncio\n"
-            "import httpx\n"
-            "from typing import Optional, Dict, Any\n\n"
-            "async def fetch_market_price(symbol: str) -> Optional[Dict[str, Any]]:\n"
-            "    \"\"\"Fetches price data asynchronously with timeout and safety controls.\"\"\"\n"
-            "    url = f'https://api.marketdata.com/v1/quote/{symbol}'\n"
-            "    try:\n"
-            "        async with httpx.AsyncClient(timeout=5.0) as client:\n"
-            "            response = await client.get(url)\n"
-            "            response.raise_for_status()\n"
-            "            return response.json()\n"
-            "    except Exception as err:\n"
-            "        print(f'[Error fetching {symbol}]: {err}')\n"
-            "        return None\n\n"
-            "if __name__ == '__main__':\n"
-            "    data = asyncio.run(fetch_market_price('NABIL'))\n"
-            "    print('Received Quote:', data)\n"
-            "```\n\n"
-            "This script uses non-blocking asynchronous I/O (`httpx.AsyncClient`), explicit type hints, and graceful exception handling."
-        )
-        return resp, "Here is the clean Python code implementation with error handling."
-
-    # Writing & Email
-    if any(k in ml for k in ["email", "letter", "draft", "proposal"]):
-        resp = (
-            "**Subject:** Project Update & Strategic Next Steps\n\n"
-            "Dear Team,\n\n"
-            "I hope you are doing well.\n\n"
-            "I am writing to provide a concise update on our recent milestones. All core deliverables for this sprint have been tested and deployed with zero defects.\n\n"
-            "Please review the attached notes, and let me know if you would like to discuss any items during our sync tomorrow.\n\n"
-            "Best regards,\n"
-            f"{owner_name}"
-        )
-        return resp, "Here is the professional email draft ready for your use."
-
-    # Translation
-    if any(k in ml for k in ["translate", "translation", "nepali to english", "english to nepali"]):
-        resp = (
-            "**Translation:**\n\n"
-            "• **English**: 'Consistent trading success comes from discipline, risk management, and patience.'\n"
-            "• **नेपाली**: 'ट्रेडिङमा निरन्तर सफलता अनुशासन, जोखिम व्यवस्थापन र धैर्यताबाट प्राप्त हुन्छ।'\n"
-            "• **हिंदी**: 'ट्रेडिंग में निरंतर सफलता अनुशासन, जोखिम प्रबंधन और धैर्य से मिलती है।'"
-        )
-        return resp, "Here is the accurate translation across English, Nepali, and Hindi."
-
-    # Natural Adaptive Direct Fallback (NO boilerplate, NO forced headings)
-    resp = (
-        f"Regarding **\"{msg}\"**:\n\n"
-        f"I'm here to provide direct and practical insights. Whether you'd like a simple summary, an in-depth breakdown, working code, mathematical proofs, or live market analysis, just let me know how you'd like to proceed!"
-    )
-    return resp, f"Here is the information for {msg}."
+        r = (f"I'm **Shachina** — your personal AI assistant built for {owner_name}. "
+             f"I can help with science, coding, math, trading, research, translation, and much more.")
+        return r, "I am Shachina, your general purpose AI assistant."
+    if any(w in ml for w in ["hello", "hi", "hey", "नमस्ते", "नमस्कार"]):
+        r = f"Hello, {owner_name}! 👋 How can I help you today? Ask me anything."
+        return r, r
+    if any(w in ml for w in ["thank", "thanks", "धन्यवाद"]):
+        return "You're welcome! 😊", "You are welcome."
+    r = ("I wasn't able to connect to my knowledge sources right now. Please try again in a moment. "
+         "I can help with trading, science, coding, math, news, translation, and much more!")
+    return r, r
 
 
 # ─── Main Assistant Chat Endpoint ─────────────────────────────────────────────
@@ -862,8 +743,12 @@ async def assistant_chat(
         if not ai_res:
             ai_res = await _call_openai(system_prompt, req.history or [], msg, image_data=req.image_data, custom_key=req.api_key)
         if not ai_res:
-            resp_text, speech_text = _general_ai_offline_response(msg, owner_name, language)
-            if search_context and sources_list:
+            uni_res = await _universal_knowledge_answer(msg, owner_name)
+            if uni_res:
+                resp_text, speech_text = uni_res
+            else:
+                resp_text, speech_text = _general_ai_offline_response(msg, owner_name, language)
+            if search_context and sources_list and not (uni_res and "Source:" in resp_text):
                 resp_text += f"\n\n**Sources:**\n" + "\n".join([f"- [{s['title']}]({s['url']})" for s in sources_list])
         else:
             resp_text = ai_res
