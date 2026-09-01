@@ -232,7 +232,16 @@ export const ShachinaAssistantPanel: React.FC<ShachinaAssistantPanelProps> = ({
   useEffect(() => {
     (async () => {
       try {
-        const res = await api.askAssistant({ message: `Quick scan on ${selectedSymbol}`, symbol: selectedSymbol, market: selectedMarket, language: lang, analysis_mode: analysisMode });
+        const res = await api.askAssistant({
+          message: `Quick technical market structure scan on ${selectedSymbol}`,
+          symbol: selectedSymbol,
+          market: selectedMarket,
+          language: lang,
+          analysis_mode: analysisMode,
+          web_search: false,
+          deep_research: false,
+          is_trading_only: true,
+        });
         if (res.chart_annotations && onAnnotationsReceived) onAnnotationsReceived(res.chart_annotations);
         if (res.trade_proposal) {
           setActiveProposal(res.trade_proposal);
@@ -245,7 +254,7 @@ export const ShachinaAssistantPanel: React.FC<ShachinaAssistantPanelProps> = ({
 
   const handleNewChat = async () => {
     try {
-      const newConv = await api.createConversation('New Conversation');
+      const newConv = await api.createConversation(`Trading Analysis ${selectedSymbol}`);
       setConversations((prev) => [newConv, ...prev]);
       setActiveConvId(newConv.id); setMessages([]); setIsDrawerOpen(false);
     } catch {}
@@ -267,7 +276,7 @@ export const ShachinaAssistantPanel: React.FC<ShachinaAssistantPanelProps> = ({
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `shachina_chat_${selectedSymbol}_${Date.now()}.txt`;
+    a.download = `shachina_trading_chat_${selectedSymbol}_${Date.now()}.txt`;
     a.click();
   };
 
@@ -301,7 +310,7 @@ export const ShachinaAssistantPanel: React.FC<ShachinaAssistantPanelProps> = ({
     let convId = activeConvId;
     if (!convId) {
       try {
-        const newConv = await api.createConversation(text.slice(0, 30));
+        const newConv = await api.createConversation(`${selectedSymbol}: ${text.slice(0, 24)}`);
         setConversations((prev) => [newConv, ...prev]);
         setActiveConvId(newConv.id); convId = newConv.id;
       } catch {}
@@ -310,7 +319,18 @@ export const ShachinaAssistantPanel: React.FC<ShachinaAssistantPanelProps> = ({
     setMessages((prev) => [...prev, tempUserMsg]);
     try {
       const historyPayload = messages.slice(-8).map((m) => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.content }));
-      const res = await api.askAssistant({ message: text, symbol: selectedSymbol, market: selectedMarket, language: lang, analysis_mode: analysisMode, conversation_id: convId || undefined, history: historyPayload });
+      const res = await api.askAssistant({
+        message: text,
+        symbol: selectedSymbol,
+        market: selectedMarket,
+        language: lang,
+        analysis_mode: analysisMode,
+        conversation_id: convId || undefined,
+        history: historyPayload,
+        web_search: false,
+        deep_research: false,
+        is_trading_only: true,
+      });
       const asstId = `asst_${Date.now()}`;
       const asstMsg: ConversationMessage = { id: asstId, role: 'shachina', content: res.response, speech_text: res.speech_text, annotations: res.chart_annotations, trade_proposal: res.trade_proposal, created_at: new Date().toISOString() };
       setMessages((prev) => [...prev, asstMsg]);
@@ -368,12 +388,32 @@ export const ShachinaAssistantPanel: React.FC<ShachinaAssistantPanelProps> = ({
 
   const filteredConvs = conversations.filter((c) => c.title.toLowerCase().includes(searchQuery.toLowerCase()));
 
-  // Categorized Prompt Suggestions
+  // Categorized Prompt Suggestions (Strictly Quantitative Trading Focus)
   const promptPills = {
-    all: ['कति profit भयो आज?', 'NABIL trade setup?', 'Python ma script lekh', 'Why is NEPSE falling?'],
-    ai: ['Explain quantum computing simply', 'Draft a professional business email', 'What is machine learning?', 'Translate this to Nepali'],
-    code: ['Python async FastAPI code', 'TypeScript React custom hook', 'Binary search tree algorithm', 'SQL query for highest volume'],
-    trading: ['कति profit भयो आज?', 'NABIL trade setup?', 'Why is NEPSE falling?', 'Explain FVG vs Order Block']
+    all: [
+      `Analyze ${selectedSymbol} market structure`,
+      `Is ${selectedSymbol} a BUY, SELL, or WAIT?`,
+      `Where are ${selectedSymbol} order blocks & liquidity?`,
+      `What is the stop loss and target for ${selectedSymbol}?`,
+    ],
+    ai: [
+      `Identify ${selectedSymbol} trend & swing points (HH/HL/LH/LL)`,
+      `Check BOS and CHoCH on ${selectedSymbol}`,
+      `Show premium vs discount dealing range for ${selectedSymbol}`,
+      `Analyze volume & momentum on ${selectedSymbol}`,
+    ],
+    code: [
+      `Give exact Entry, SL, and TP targets for ${selectedSymbol}`,
+      `Where is the invalidation level for ${selectedSymbol}?`,
+      `What is the Risk/Reward ratio for ${selectedSymbol}?`,
+      `Find key support and resistance zones for ${selectedSymbol}`,
+    ],
+    trading: [
+      `Find Bullish / Bearish Order Blocks on ${selectedSymbol}`,
+      `Identify Fair Value Gaps (FVG) on ${selectedSymbol}`,
+      `Where is Buy-Side & Sell-Side Liquidity for ${selectedSymbol}?`,
+      `Evaluate ${selectedSymbol} setup quality score`,
+    ]
   };
 
   return (
@@ -387,7 +427,7 @@ export const ShachinaAssistantPanel: React.FC<ShachinaAssistantPanelProps> = ({
               <MessageSquare className="w-4 h-4" />
             </button>
             <div className="flex items-center gap-1.5">
-              <span className="font-extrabold text-sm text-cyan-300 font-mono tracking-tight">SHACHINA AI</span>
+              <span className="font-extrabold text-sm text-cyan-300 font-mono tracking-tight">TRADING AI</span>
               <span className="text-[9px] bg-cyan-950 text-cyan-400 border border-cyan-800 px-1.5 rounded font-bold font-mono">{selectedSymbol}</span>
             </div>
           </div>

@@ -284,6 +284,7 @@ export interface AssistantChatPayload {
   deep_research?: boolean;
   project_id?: string;
   enable_memory?: boolean;
+  is_trading_only?: boolean;
 }
 
 export interface AssistantChatResponse {

@@ -51,6 +51,7 @@ class ChatRequest(BaseModel):
     deep_research: Optional[bool] = False    # Enable comprehensive deep research
     project_id: Optional[str] = None        # Project workspace context
     enable_memory: Optional[bool] = True    # User personalized memory
+    is_trading_only: Optional[bool] = False  # Dedicated Trading AI Mode (strictly trading analysis, no web search)
 
 
 class ChatResponse(BaseModel):
@@ -587,6 +588,57 @@ When user asks about trading ("Can I take trade?", "Setup evaluate", "Where is l
 """
 
 
+def _build_trading_only_system_prompt(
+    owner_name: str,
+    language: str,
+    analysis_mode: str,
+    market_context: str
+) -> str:
+    import zoneinfo
+    now_npt = datetime.now(zoneinfo.ZoneInfo("Asia/Kathmandu"))
+
+    lang_inst = (
+        "Respond in natural Hindi + Nepali mixed conversational language (simple, friendly, and accessible for Nepali traders). Keep technical trading terms in English (Liquidity, BOS, CHOCH, FVG, Order Block, Support, Resistance, Risk/Reward, Stop Loss, Take Profit, Retest, Displacement)."
+        if language == "ne"
+        else "Respond in Hindi (Devanagari script)." if language == "hi"
+        else "Respond in natural English."
+    )
+
+    mode_inst = (
+        "Use Beginner Mode: explain market setups with simple language, clear analogies, and avoid excessive jargon."
+        if analysis_mode == "beginner" else
+        "Use Pro Mode: institutional breakdown — market structure (HH/HL/LH/LL), BOS/CHoCH/MSS, liquidity pools (BSL/SSL/EQH/EQL/PDH/PDL), FVG, order blocks, premium/discount dealing ranges, precise invalidation."
+    )
+
+    return f"""You are Shachina Trading AI — the dedicated institutional quantitative market structure and candlestick pattern analyst built for {owner_name}.
+
+[CURRENT TIME]: {now_npt.strftime('%A, %B %d, %Y, %I:%M:%S %p')} NPT
+
+## STRICT TRADING FOCUS (NO WEB SEARCH / PURE QUANTITATIVE ANALYSIS)
+You are operating in DEDICATED TRADING AI MODE.
+- Analyze ONLY the active chart, candlestick patterns, price action, volume, and quantitative market structure.
+- Do NOT perform web searches or give generic search results. Base your analysis on verified live OHLCV price action provided in context.
+- Analyze institutional market structure:
+  * Trend & Swing Structure (HH/HL/LH/LL)
+  * Smart Money Concepts: BOS (Break of Structure), CHoCH (Change of Character), MSS (Market Structure Shift)
+  * Liquidity Pools: BSL (Buy-Side Liquidity), SSL (Sell-Side Liquidity), Equal Highs/Lows
+  * Imbalances: FVG (Fair Value Gap), Order Blocks (Bullish/Bearish OB)
+  * Dealing Ranges: Premium vs Discount zones
+  * Support & Resistance levels
+- ALWAYS provide a clear, actionable decision:
+  * **LONG 🟢** (with exact entry price/zone, Stop Loss, Target 1, Target 2, Target 3, Risk/Reward ratio 1:2+)
+  * **SHORT 🔴** (with exact levels)
+  * **WAIT 🟡** (explicitly explain which conditions are missing: e.g. waiting for liquidity sweep, waiting for BOS confirmation, or waiting for retest)
+  * **NO TRADE ⚪** (if price is ranging in chop without edge)
+- State exact invalidation level for every setup.
+- Never guarantee profits. Always emphasize capital preservation and risk management (Max 1% risk per trade).
+- {lang_inst}
+
+{mode_inst}
+{market_context}
+"""
+
+
 # ─── Live Web Search Engine ───────────────────────────────────────────────────
 async def _search_web_live(query: str, max_results: int = 4) -> tuple[str, List[Dict[str, str]]]:
     """
@@ -1090,33 +1142,36 @@ async def assistant_chat(
                     sources=None, timestamp=now_iso, cached=False,
                 )
 
-        # 1. Live Web Search & Deep Research Integration
+        # 1. Live Web Search & Deep Research Integration (STRICTLY OFF in Trading AI Mode)
         search_context = ""
-        _news_triggers_roman = [
-            "news", "samachar", "halkhabar", "k bhayo", "k xa", "nepal ma k",
-            "aaja k bhayo", "latest", "live", "ajako", "aajako",
-        ]
-        _market_triggers_roman = [
-            "market", "stock price", "share price", "nepse", "nifty", "sensex",
-            "nasdaq", "sp500", "s&p", "oil price", "gold price", "dollar",
-        ]
-        should_search = req.web_search or req.deep_research or any(
-            k in msg_lower for k in [
-                "search the web", "search web", "google", "search google", "search on google",
-                "latest news", "today news", "bitcoin price", "crypto price", "nepse news",
-                "latest updates", "current price", "who won", "live score", "weather in",
-                # Roman Nepali news triggers
-                "nepal news", "nepal ko khabar", "nepal ko news", "nepal ma ke bhayo",
-                "aaja ko khabar", "ajako samachar", "samachar k xa", "halkhabar k xa",
-                "breaking news", "world news", "global news", "new update",
-                # Market triggers
-                "share bazar", "share market", "nepse index", "nepse ko",
+        if not req.is_trading_only:
+            _news_triggers_roman = [
+                "news", "samachar", "halkhabar", "k bhayo", "k xa", "nepal ma k",
+                "aaja k bhayo", "latest", "live", "ajako", "aajako",
             ]
-        ) or any(k in msg_lower for k in _news_triggers_roman + _market_triggers_roman)
-        if should_search:
-            thinking_status_str = "🔎 Searching Google & verified web sources..."
-            search_summary, sources_list = await _search_web_live(msg_cleaned, max_results=6 if req.deep_research else 4)
-            search_context = search_summary
+            _market_triggers_roman = [
+                "market", "stock price", "share price", "nepse", "nifty", "sensex",
+                "nasdaq", "sp500", "s&p", "oil price", "gold price", "dollar",
+            ]
+            should_search = req.web_search or req.deep_research or any(
+                k in msg_lower for k in [
+                    "search the web", "search web", "google", "search google", "search on google",
+                    "latest news", "today news", "bitcoin price", "crypto price", "nepse news",
+                    "latest updates", "current price", "who won", "live score", "weather in",
+                    # Roman Nepali news triggers
+                    "nepal news", "nepal ko khabar", "nepal ko news", "nepal ma ke bhayo",
+                    "aaja ko khabar", "ajako samachar", "samachar k xa", "halkhabar k xa",
+                    "breaking news", "world news", "global news", "new update",
+                    # Market triggers
+                    "share bazar", "share market", "nepse index", "nepse ko",
+                ]
+            ) or any(k in msg_lower for k in _news_triggers_roman + _market_triggers_roman)
+            if should_search:
+                thinking_status_str = "🔎 Searching Google & verified web sources..."
+                search_summary, sources_list = await _search_web_live(msg_cleaned, max_results=6 if req.deep_research else 4)
+                search_context = search_summary
+        else:
+            thinking_status_str = "📊 Analyzing candlestick patterns & market structure..."
 
         # 2. File Context Attachment
         file_context = ""
@@ -1177,7 +1232,10 @@ async def assistant_chat(
             f"{memory_context}"
             f"{context_topic}"
         )
-        system_prompt = _build_system_prompt(owner_name, language, analysis_mode, market_context)
+        if req.is_trading_only:
+            system_prompt = _build_trading_only_system_prompt(owner_name, language, analysis_mode, market_context)
+        else:
+            system_prompt = _build_system_prompt(owner_name, language, analysis_mode, market_context)
 
         # Generate background chart annotations if symbol candles exist
         try:
@@ -1187,6 +1245,8 @@ async def assistant_chat(
                 )
                 if eval_result.annotations:
                     chart_annotations = eval_result.annotations.model_dump()
+                if eval_result.setup and req.is_trading_only:
+                    trade_proposal = eval_result.setup.model_dump()
         except Exception:
             pass
 

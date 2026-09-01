@@ -269,6 +269,7 @@ export const api = {
     deep_research?: boolean;
     project_id?: string;
     enable_memory?: boolean;
+    is_trading_only?: boolean;
   }) {
     const res = await fetchWithTimeout(`${API_BASE}/assistant/chat`, {
       method: 'POST',
