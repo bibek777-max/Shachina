@@ -20,6 +20,8 @@ from backend.app.api.websocket import router as ws_router
 from backend.app.api.signals import router as signals_router
 from backend.app.api.conversations import router as conversations_router
 from backend.app.api.trading import router as trading_router
+from backend.app.api.memory import router as memory_router
+from backend.app.api.projects import router as projects_router
 from shachina_quant.data.factory import MarketDataProviderRegistry
 
 
@@ -96,6 +98,8 @@ app.include_router(assistant_router, prefix=settings.API_V1_PREFIX)
 app.include_router(signals_router, prefix=settings.API_V1_PREFIX)
 app.include_router(conversations_router, prefix=settings.API_V1_PREFIX)
 app.include_router(trading_router, prefix=settings.API_V1_PREFIX)
+app.include_router(memory_router, prefix=settings.API_V1_PREFIX)
+app.include_router(projects_router, prefix=settings.API_V1_PREFIX)
 app.include_router(ws_router)
 
 

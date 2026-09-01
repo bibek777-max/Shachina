@@ -206,3 +206,66 @@ export interface Conversation {
   updated_at?: string;
   messages?: ConversationMessage[];
 }
+
+export interface UserMemoryItem {
+  id: number;
+  memory_key: string;
+  memory_value: string;
+  category: string;
+  is_enabled: boolean;
+  created_at?: string;
+}
+
+export interface ProjectItem {
+  id: string;
+  item_type: 'FILE' | 'NOTE' | 'DATASET' | 'CONVERSATION';
+  title: string;
+  content?: string;
+  file_metadata?: Record<string, any>;
+  created_at?: string;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  description?: string;
+  instructions?: string;
+  context_data?: Record<string, any>;
+  item_count?: number;
+  items?: ProjectItem[];
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface AssistantChatPayload {
+  message: string;
+  symbol?: string;
+  market?: string;
+  timeframe?: string;
+  language?: string;
+  analysis_mode?: 'beginner' | 'pro';
+  conversation_id?: string;
+  history?: Array<{ role: string; content: string }>;
+  image_data?: string;
+  file_data?: { name: string; type: string; content: string };
+  web_search?: boolean;
+  deep_research?: boolean;
+  project_id?: string;
+  enable_memory?: boolean;
+}
+
+export interface AssistantChatResponse {
+  response: string;
+  speech_text: string;
+  language: string;
+  symbol?: string;
+  market: string;
+  conversation_id?: string;
+  chart_annotations?: ChartAnnotations;
+  trade_proposal?: TradeProposal;
+  data_quality_score: number;
+  thinking_status?: string;
+  sources?: Array<{ title: string; url: string; snippet?: string }>;
+  timestamp: string;
+  cached: boolean;
+}

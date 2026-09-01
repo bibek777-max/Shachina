@@ -198,6 +198,12 @@ export const api = {
     analysis_mode?: 'beginner' | 'pro';
     conversation_id?: string;
     history?: Array<{ role: string; content: string }>;
+    image_data?: string;
+    file_data?: { name: string; type: string; content: string };
+    web_search?: boolean;
+    deep_research?: boolean;
+    project_id?: string;
+    enable_memory?: boolean;
   }) {
     const res = await fetchWithTimeout(`${API_BASE}/assistant/chat`, {
       method: 'POST',
@@ -208,6 +214,90 @@ export const api = {
       const err = await res.json().catch(() => ({ detail: 'Assistant error' }));
       throw new Error(err.detail || 'Assistant error');
     }
+    return res.json();
+  },
+
+  // ── User Memory ────────────────────────────────────────────────────────────
+  async getMemories(): Promise<any[]> {
+    const res = await fetchWithTimeout(`${API_BASE}/user/memory`, {
+      headers: this.getAuthHeaders(),
+    });
+    if (!res.ok) return [];
+    return res.json();
+  },
+
+  async createMemory(memory_key: string, memory_value: string, category: string = 'GENERAL') {
+    const res = await fetchWithTimeout(`${API_BASE}/user/memory`, {
+      method: 'POST',
+      headers: this.getAuthHeaders(),
+      body: JSON.stringify({ memory_key, memory_value, category }),
+    });
+    return res.json();
+  },
+
+  async toggleMemory(id: number) {
+    const res = await fetchWithTimeout(`${API_BASE}/user/memory/${id}/toggle`, {
+      method: 'PATCH',
+      headers: this.getAuthHeaders(),
+    });
+    return res.json();
+  },
+
+  async deleteMemory(id: number) {
+    const res = await fetchWithTimeout(`${API_BASE}/user/memory/${id}`, {
+      method: 'DELETE',
+      headers: this.getAuthHeaders(),
+    });
+    return res.json();
+  },
+
+  async deleteAllMemories() {
+    const res = await fetchWithTimeout(`${API_BASE}/user/memory`, {
+      method: 'DELETE',
+      headers: this.getAuthHeaders(),
+    });
+    return res.json();
+  },
+
+  // ── Projects Workspace ─────────────────────────────────────────────────────
+  async getProjects(): Promise<any[]> {
+    const res = await fetchWithTimeout(`${API_BASE}/projects`, {
+      headers: this.getAuthHeaders(),
+    });
+    if (!res.ok) return [];
+    return res.json();
+  },
+
+  async createProject(name: string, description: string = '', instructions: string = '') {
+    const res = await fetchWithTimeout(`${API_BASE}/projects`, {
+      method: 'POST',
+      headers: this.getAuthHeaders(),
+      body: JSON.stringify({ name, description, instructions }),
+    });
+    return res.json();
+  },
+
+  async getProject(id: string) {
+    const res = await fetchWithTimeout(`${API_BASE}/projects/${id}`, {
+      headers: this.getAuthHeaders(),
+    });
+    return res.json();
+  },
+
+  async addProjectItem(projectId: string, item_type: string, title: string, content: string = '') {
+    const res = await fetchWithTimeout(`${API_BASE}/projects/${projectId}/items`, {
+      method: 'POST',
+      headers: this.getAuthHeaders(),
+      body: JSON.stringify({ item_type, title, content }),
+    });
+    return res.json();
+  },
+
+  async deleteProject(id: string) {
+    const res = await fetchWithTimeout(`${API_BASE}/projects/${id}`, {
+      method: 'DELETE',
+      headers: this.getAuthHeaders(),
+    });
     return res.json();
   },
 

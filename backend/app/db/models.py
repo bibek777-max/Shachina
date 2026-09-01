@@ -39,6 +39,7 @@ class User(Base):
     paper_trades = relationship("UserPaperTrade", back_populates="user", cascade="all, delete-orphan")
     portfolios = relationship("UserPortfolio", back_populates="user", cascade="all, delete-orphan")
     memories = relationship("UserMemory", back_populates="user", cascade="all, delete-orphan")
+    projects = relationship("Project", back_populates="user", cascade="all, delete-orphan")
     conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
     orders = relationship("TradeOrder", back_populates="user", cascade="all, delete-orphan")
     positions = relationship("TradingPosition", back_populates="user", cascade="all, delete-orphan")
@@ -210,6 +211,36 @@ class UserMemory(Base):
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     user = relationship("User", back_populates="memories")
+
+
+class Project(Base):
+    __tablename__ = "projects"
+
+    id = Column(String(64), primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    name = Column(String(128), nullable=False)
+    description = Column(Text, nullable=True)
+    instructions = Column(Text, nullable=True)
+    context_data = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    user = relationship("User", back_populates="projects")
+    items = relationship("ProjectItem", back_populates="project", cascade="all, delete-orphan")
+
+
+class ProjectItem(Base):
+    __tablename__ = "project_items"
+
+    id = Column(String(64), primary_key=True, index=True)
+    project_id = Column(String(64), ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=False)
+    item_type = Column(String(32), nullable=False)  # 'FILE', 'CONVERSATION', 'NOTE', 'DATASET'
+    title = Column(String(256), nullable=False)
+    content = Column(Text, nullable=True)
+    file_metadata = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    project = relationship("Project", back_populates="items")
 
 
 # ─── Multi-Conversation Memory Models ─────────────────────────────────────────

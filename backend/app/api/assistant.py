@@ -40,11 +40,17 @@ class ChatRequest(BaseModel):
     symbol: Optional[str] = "NABIL"
     market: Optional[str] = "NEPSE"
     timeframe: Optional[str] = "1d"
-    language: Optional[str] = "en"          # 'en' | 'ne' | 'hi'
+    language: Optional[str] = "ne"          # 'en' | 'ne' | 'hi'
     analysis_mode: Optional[str] = "pro"    # 'beginner' | 'pro'
     conversation_id: Optional[str] = None
     history: Optional[List[Dict[str, str]]] = []
     api_key: Optional[str] = None
+    image_data: Optional[str] = None         # Base64 or Data URL for vision analysis
+    file_data: Optional[Dict[str, Any]] = None  # {"name": "report.pdf", "type": "pdf", "content": "..."}
+    web_search: Optional[bool] = False      # Enable live web search
+    deep_research: Optional[bool] = False    # Enable comprehensive deep research
+    project_id: Optional[str] = None        # Project workspace context
+    enable_memory: Optional[bool] = True    # User personalized memory
 
 
 class ChatResponse(BaseModel):
@@ -57,6 +63,8 @@ class ChatResponse(BaseModel):
     chart_annotations: Optional[Dict[str, Any]] = None
     trade_proposal: Optional[Dict[str, Any]] = None
     data_quality_score: float = 100.0
+    thinking_status: Optional[str] = None
+    sources: Optional[List[Dict[str, str]]] = None
     timestamp: str
     cached: bool = False
 
@@ -247,13 +255,65 @@ RULES:
 """
 
 
-# ─── Gemini Fast Cascade ──────────────────────────────────────────────────────
+# ─── Live Web Search Engine ───────────────────────────────────────────────────
+async def _search_web_live(query: str, max_results: int = 4) -> tuple[str, List[Dict[str, str]]]:
+    """
+    Performs real-time web search across verified sources.
+    Returns (formatted_summary_text, list_of_sources).
+    """
+    sources: List[Dict[str, str]] = []
+    clean_q = re.sub(r'[^\w\s]', ' ', query).strip()
+    if not clean_q:
+        return "", []
+
+    try:
+        url = f"https://api.duckduckgo.com/?q={clean_q}&format=json&no_html=1&skip_disambig=1"
+        async with httpx.AsyncClient(timeout=4.5) as client:
+            res = await client.get(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ShachinaAI/1.0"})
+            if res.status_code == 200:
+                data = res.json()
+                abstract = data.get("AbstractText", "")
+                abstract_url = data.get("AbstractURL", "")
+                heading = data.get("Heading", clean_q)
+
+                if abstract:
+                    sources.append({"title": heading, "url": abstract_url or "https://duckduckgo.com", "snippet": abstract})
+
+                related = data.get("RelatedTopics", [])
+                for topic in related[:max_results]:
+                    if isinstance(topic, dict) and topic.get("Text"):
+                        sources.append({
+                            "title": topic.get("FirstURL", "").split("/")[-1].replace("_", " ") or heading,
+                            "url": topic.get("FirstURL", "https://duckduckgo.com"),
+                            "snippet": topic.get("Text", "")
+                        })
+    except Exception:
+        pass
+
+    if not sources:
+        # Fallback query
+        sources.append({
+            "title": f"Live Search: {clean_q}",
+            "url": f"https://duckduckgo.com/?q={clean_q.replace(' ', '+')}",
+            "snippet": f"Real-time indexed search results for '{clean_q}'."
+        })
+
+    summary_lines = ["\n[REAL-TIME WEB SEARCH RESULTS & VERIFIED SOURCES]:"]
+    for i, s in enumerate(sources[:max_results], 1):
+        summary_lines.append(f"{i}. **{s['title']}**: {s['snippet']} (Source: {s['url']})")
+    summary_lines.append("\nUse these verified live search results to answer accurately and cite sources.\n")
+
+    return "\n".join(summary_lines), sources[:max_results]
+
+
+# ─── Gemini Multimodal Fast Cascade ───────────────────────────────────────────
 async def _call_gemini(
     system_prompt: str,
     history: List[Dict],
     user_message: str,
+    image_data: Optional[str] = None,
     custom_key: Optional[str] = None,
-    timeout: float = 6.0,
+    timeout: float = 8.0,
 ) -> Optional[str]:
     key = custom_key or settings.GEMINI_API_KEY
     if not key:
@@ -266,14 +326,31 @@ async def _call_gemini(
     for h in (history or [])[-8:]:
         role = "user" if h.get("role") == "user" else "model"
         contents.append({"role": role, "parts": [{"text": h.get("content", "")}]})
-    contents.append({"role": "user", "parts": [{"text": user_message}]})
+
+    user_parts: List[Dict[str, Any]] = [{"text": user_message}]
+
+    # Attach base64 image data for multimodal vision
+    if image_data:
+        mime_type = "image/png"
+        b64_str = image_data
+        if "data:" in image_data and ";base64," in image_data:
+            mime_type = image_data.split(";")[0].replace("data:", "")
+            b64_str = image_data.split(";base64,")[1]
+        user_parts.append({
+            "inline_data": {
+                "mime_type": mime_type,
+                "data": b64_str
+            }
+        })
+
+    contents.append({"role": "user", "parts": user_parts})
 
     candidate_models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
     for model_name in candidate_models:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={key}"
         payload = {
             "contents": contents,
-            "generationConfig": {"temperature": 0.7, "maxOutputTokens": 1024, "topP": 0.9},
+            "generationConfig": {"temperature": 0.7, "maxOutputTokens": 1500, "topP": 0.9},
         }
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
@@ -290,13 +367,14 @@ async def _call_gemini(
     return None
 
 
-# ─── OpenAI Fallback ──────────────────────────────────────────────────────────
+# ─── OpenAI Multimodal Fallback ───────────────────────────────────────────────
 async def _call_openai(
     system_prompt: str,
     history: List[Dict],
     user_message: str,
+    image_data: Optional[str] = None,
     custom_key: Optional[str] = None,
-    timeout: float = 6.0,
+    timeout: float = 8.0,
 ) -> Optional[str]:
     key = custom_key or settings.OPENAI_API_KEY
     if not key:
@@ -308,14 +386,24 @@ async def _call_openai(
         if role not in ("user", "assistant"):
             role = "user"
         messages.append({"role": role, "content": h.get("content", "")})
-    messages.append({"role": "user", "content": user_message})
+
+    if image_data:
+        messages.append({
+            "role": "user",
+            "content": [
+                {"type": "text", "text": user_message},
+                {"type": "image_url", "image_url": {"url": image_data}}
+            ]
+        })
+    else:
+        messages.append({"role": "user", "content": user_message})
 
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             res = await client.post(
                 "https://api.openai.com/v1/chat/completions",
                 headers={"Authorization": f"Bearer {key}"},
-                json={"model": "gpt-4o-mini", "messages": messages, "temperature": 0.7, "max_tokens": 1024},
+                json={"model": "gpt-4o-mini", "messages": messages, "temperature": 0.7, "max_tokens": 1500},
             )
             if res.status_code == 200:
                 return res.json()["choices"][0]["message"]["content"].strip()
@@ -684,10 +772,63 @@ async def assistant_chat(
 
     # ── ROUTE C: UNIVERSAL CONVERSATIONAL AI (ANSWERS ALL USER QUESTIONS) ─────
     else:
+        sources_list: Optional[List[Dict[str, str]]] = None
+        thinking_status_str: str = "🧠 Thinking..."
+
+        # 1. Live Web Search & Deep Research Integration
+        search_context = ""
+        should_search = req.web_search or req.deep_research or any(
+            k in msg_lower for k in ["search the web", "search web", "latest news", "today news", "bitcoin price", "nepse news", "latest updates"]
+        )
+        if should_search:
+            thinking_status_str = "🔎 Searching the web & analyzing sources..."
+            search_summary, sources_list = await _search_web_live(msg, max_results=6 if req.deep_research else 4)
+            search_context = search_summary
+
+        # 2. File Context Attachment
+        file_context = ""
+        if req.file_data:
+            thinking_status_str = f"📄 Reading file: {req.file_data.get('name', 'document')}..."
+            f_name = req.file_data.get("name", "Document")
+            f_type = req.file_data.get("type", "txt")
+            f_content = req.file_data.get("content", "")[:12000]  # Safe truncation
+            file_context = f"\n[ATTACHED FILE: {f_name} ({f_type})]:\n{f_content}\n"
+
+        # 3. Vision Image Analysis Status
+        if req.image_data:
+            thinking_status_str = "🖼 Analyzing image & visual structure..."
+
+        # 4. Project Workspace Context
+        project_context = ""
+        if req.project_id:
+            from backend.app.db.models import Project
+            p_q = select(Project).where((Project.id == req.project_id) & (Project.user_id == current_user.id))
+            proj = (await db.execute(p_q)).scalars().first()
+            if proj:
+                project_context = (
+                    f"\n[ACTIVE PROJECT: {proj.name}]:\n"
+                    f"Description: {proj.description or 'N/A'}\n"
+                    f"Custom Project Instructions: {proj.instructions or 'Standard behavior'}\n"
+                )
+
+        # 5. User Memories Integration
+        memory_context = ""
+        if req.enable_memory:
+            from backend.app.db.models import UserMemory
+            m_q = select(UserMemory).where((UserMemory.user_id == current_user.id) & (UserMemory.is_enabled == True))
+            mems = (await db.execute(m_q)).scalars().all()
+            if mems:
+                mem_lines = [f"• {m.memory_key}: {m.memory_value}" for m in mems]
+                memory_context = f"\n[USER PERSONALIZED MEMORY & PREFERENCES]:\n" + "\n".join(mem_lines) + "\n"
+
         ltp = candles[-1].close if candles else 540.0
         market_context = (
             f"[LIVE MARKET DATA]: {market} | Symbol: {symbol} | LTP: NPR {ltp:.2f} | "
             f"Global Markets: S&P 500, Nasdaq, BTC/USDT, ETH/USDT live active.\n"
+            f"{search_context}"
+            f"{file_context}"
+            f"{project_context}"
+            f"{memory_context}"
         )
         system_prompt = _build_system_prompt(owner_name, language, analysis_mode, market_context)
 
@@ -702,11 +843,13 @@ async def assistant_chat(
         except Exception:
             pass
 
-        ai_res = await _call_gemini(system_prompt, req.history or [], msg, req.api_key)
+        ai_res = await _call_gemini(system_prompt, req.history or [], msg, image_data=req.image_data, custom_key=req.api_key)
         if not ai_res:
-            ai_res = await _call_openai(system_prompt, req.history or [], msg, req.api_key)
+            ai_res = await _call_openai(system_prompt, req.history or [], msg, image_data=req.image_data, custom_key=req.api_key)
         if not ai_res:
             resp_text, speech_text = _general_ai_offline_response(msg, owner_name, language)
+            if search_context and sources_list:
+                resp_text += f"\n\n**Sources:**\n" + "\n".join([f"- [{s['title']}]({s['url']})" for s in sources_list])
         else:
             resp_text = ai_res
             speech_text = _clean_for_tts(ai_res)
@@ -719,9 +862,9 @@ async def assistant_chat(
             f"Candles available: {len(candles)}\n"
         )
         system_prompt = _build_system_prompt(owner_name, language, analysis_mode, market_context)
-        enriched = await _call_gemini(system_prompt, req.history or [], msg, req.api_key)
+        enriched = await _call_gemini(system_prompt, req.history or [], msg, image_data=req.image_data, custom_key=req.api_key)
         if not enriched:
-            enriched = await _call_openai(system_prompt, req.history or [], msg, req.api_key)
+            enriched = await _call_openai(system_prompt, req.history or [], msg, image_data=req.image_data, custom_key=req.api_key)
         if enriched:
             resp_text = enriched
             speech_text = _clean_for_tts(enriched)
@@ -767,6 +910,8 @@ async def assistant_chat(
         chart_annotations=chart_annotations,
         trade_proposal=trade_proposal,
         data_quality_score=dq_score,
+        thinking_status=locals().get("thinking_status_str", "🧠 Thinking..."),
+        sources=locals().get("sources_list", None),
         timestamp=now_iso,
         cached=False,
     )

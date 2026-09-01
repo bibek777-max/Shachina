@@ -7,6 +7,10 @@ import { TradingPanel } from './components/TradingPanel';
 import { ShachinaAssistantPanel } from './components/ShachinaAssistantPanel';
 import { UserProfileModal } from './components/UserProfileModal';
 import { TradeAlertBanner } from './components/TradeAlertBanner';
+import { NavigationSidebar, NavSection } from './components/NavigationSidebar';
+import { MainChatView } from './components/MainChatView';
+import { MemoryModal } from './components/MemoryModal';
+import { ProjectsModal } from './components/ProjectsModal';
 import { tradeAlertEngine, TradeSignal } from './services/tradeAlertEngine';
 
 import { AuthLogin } from './components/auth/AuthLogin';
@@ -24,6 +28,7 @@ import {
   ChartAnnotations,
   TradingPosition,
   TradeOrder,
+  Project,
 } from './types';
 
 type ScreenState = 'login' | 'forgot_password' | 'onboarding' | 'dashboard';
@@ -32,6 +37,12 @@ export const App: React.FC = () => {
   const [screen, setScreen] = useState<ScreenState>('login');
   const [user, setUser] = useState<User | null>(null);
   const [isInitializing, setIsInitializing] = useState<boolean>(true);
+
+  // Navigation State (Sidebar)
+  const [activeNav, setActiveNav] = useState<NavSection>('chats');
+  const [isMemoryOpen, setIsMemoryOpen] = useState<boolean>(false);
+  const [isProjectsOpen, setIsProjectsOpen] = useState<boolean>(false);
+  const [activeProject, setActiveProject] = useState<Project | null>(null);
 
   // Trading Dashboard State
   const [activeMarket, setActiveMarket] = useState<MarketType>('NEPSE');
@@ -186,6 +197,22 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleNavSelect = (sec: NavSection) => {
+    if (sec === 'memory') {
+      setIsMemoryOpen(true);
+      return;
+    }
+    if (sec === 'projects') {
+      setIsProjectsOpen(true);
+      return;
+    }
+    if (sec === 'settings') {
+      setIsProfileOpen(true);
+      return;
+    }
+    setActiveNav(sec);
+  };
+
   // ── Initial Loading Splash ─────────────────────────────────────────────────
   if (isInitializing) {
     return (
@@ -217,153 +244,175 @@ export const App: React.FC = () => {
     return <OnboardingWizard user={user} onComplete={() => setScreen('dashboard')} />;
   }
 
-  // ── MAIN 4-QUADRANT INSTITUTIONAL TRADING DASHBOARD ─────────────────────────
+  // ── MAIN APPLICATION ───────────────────────────────────────────────────────
   return (
-    <div className="h-screen w-screen flex flex-col bg-[#070b16] text-slate-100 overflow-hidden select-none font-['Plus_Jakarta_Sans',sans-serif]">
-      {/* ── Top Header ──────────────────────────────────────────────────────── */}
-      <Header
-        nepseStatus={nepseStatus}
-        user={user}
-        positions={positions}
-        onOpenVoice={() => setIsAssistantModalOpen(true)}
-        onOpenProfile={() => setIsProfileOpen(true)}
-      />
-
-      {/* Network Alert / Retry Banner */}
-      {loadError && (
-        <div className="bg-rose-950/90 border-b border-rose-700 px-4 py-1.5 flex items-center justify-between text-xs text-rose-200 font-mono z-20 shrink-0">
-          <span>⚠️ {loadError}</span>
-          <button
-            onClick={() => {
-              loadMarketInfo();
-              loadCandles();
-            }}
-            className="bg-rose-800 hover:bg-rose-700 text-white px-2.5 py-0.5 rounded text-[10px] font-bold"
-          >
-            Retry
-          </button>
-        </div>
-      )}
-
-      {/* Mobile Tab Switcher (< lg screens) */}
-      <div className="lg:hidden flex border-b border-[#1c2438] bg-[#0c101c] shrink-0 text-xs font-mono">
-        <button
-          onClick={() => setMobileTab('chart')}
-          className={`flex-1 py-2 font-bold text-center ${
-            mobileTab === 'chart' ? 'text-cyan-400 border-b-2 border-cyan-400 bg-cyan-950/20' : 'text-slate-400'
-          }`}
-        >
-          📈 Chart
-        </button>
-        <button
-          onClick={() => setMobileTab('watchlist')}
-          className={`flex-1 py-2 font-bold text-center ${
-            mobileTab === 'watchlist' ? 'text-cyan-400 border-b-2 border-cyan-400 bg-cyan-950/20' : 'text-slate-400'
-          }`}
-        >
-          📋 Watchlist
-        </button>
-        <button
-          onClick={() => setMobileTab('assistant')}
-          className={`flex-1 py-2 font-bold text-center ${
-            mobileTab === 'assistant' ? 'text-cyan-400 border-b-2 border-cyan-400 bg-cyan-950/20' : 'text-slate-400'
-          }`}
-        >
-          ✨ Shachina AI
-        </button>
-        <button
-          onClick={() => setMobileTab('trading')}
-          className={`flex-1 py-2 font-bold text-center ${
-            mobileTab === 'trading' ? 'text-cyan-400 border-b-2 border-cyan-400 bg-cyan-950/20' : 'text-slate-400'
-          }`}
-        >
-          💼 Positions ({positions.length})
-        </button>
+    <div className="h-screen w-screen flex bg-[#070b16] text-slate-100 overflow-hidden select-none font-['Plus_Jakarta_Sans',sans-serif]">
+      {/* ── Left Sidebar Navigation (Chats, Projects, Search, Files, Images, Deep Research, 🧠 Trading AI, Memory, Settings) ── */}
+      <div className="hidden md:flex h-full shrink-0">
+        <NavigationSidebar
+          activeSection={activeNav}
+          onSelectSection={handleNavSelect}
+          onNewChat={() => {
+            setActiveNav('chats');
+          }}
+          user={user}
+          onOpenSettings={() => setIsProfileOpen(true)}
+        />
       </div>
 
-      {/* ── Main Workspace Body (Left Watchlist | Center Chart | Right AI) ── */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Left: Watchlist Sidebar */}
-        <div className={`h-full ${mobileTab === 'watchlist' ? 'w-full flex' : 'hidden lg:flex lg:w-64 shrink-0'}`}>
-          <WatchlistSidebar
-            activeMarket={activeMarket}
-            onSelectMarket={(m) => setActiveMarket(m)}
-            symbols={symbols}
-            selectedSymbol={selectedSymbol}
-            onSelectSymbol={(sym) => {
-              setSelectedSymbol(sym);
-              setMobileTab('chart');
-            }}
-          />
-        </div>
-
-        {/* Center: Canvas Candlestick Chart + Data Health */}
-        <main className={`flex-1 flex-col p-2 gap-2 overflow-hidden ${mobileTab === 'chart' ? 'flex' : 'hidden lg:flex'}`}>
-          <div className="flex-1 relative overflow-hidden">
-            <FinancialChart
-              symbol={selectedSymbol}
-              currency={ohlcvData?.currency || (activeMarket === 'NEPSE' ? 'NPR' : 'USD')}
-              timeframe={timeframe}
-              candles={ohlcvData?.candles || []}
-              annotations={chartAnnotations}
-              onTimeframeChange={(tf) => setTimeframe(tf)}
-              isLoading={isLoadingChart}
-            />
-          </div>
-          <div className="h-10 shrink-0">
-            <DataHealthPanel report={ohlcvData?.data_quality || null} />
-          </div>
-        </main>
-
-        {/* Right: Shachina AI Assistant Panel (Conversations, Voice, Trade Cards) */}
-        <div className={`h-full ${mobileTab === 'assistant' ? 'w-full flex' : 'hidden lg:flex lg:w-96 shrink-0'}`}>
-          <ShachinaAssistantPanel
+      {/* ── Main Workspace Body ───────────────────────────────────────────── */}
+      <div className="flex-1 flex flex-col h-full overflow-hidden">
+        {/* VIEW 1: ChatGPT-style General AI Assistant */}
+        {activeNav !== 'trading_ai' ? (
+          <MainChatView
+            user={user}
             selectedSymbol={selectedSymbol}
             selectedMarket={activeMarket}
-            user={user}
-            isEmbedded={true}
+            timeframe={timeframe}
+            initialMode={activeNav}
+            activeProjectId={activeProject?.id}
+            onOpenTradingAI={() => setActiveNav('trading_ai')}
             onAnnotationsReceived={(ann) => setChartAnnotations(ann)}
-            onOrderPlaced={() => loadPositionsAndOrders()}
           />
-        </div>
-
-        {/* Mobile-only View for Trading Positions */}
-        {mobileTab === 'trading' && (
-          <div className="w-full h-full lg:hidden flex flex-col">
-            <TradingPanel
+        ) : (
+          /* VIEW 2: 🧠 Trading AI — Full 4-Quadrant Institutional Trading Terminal */
+          <div className="flex-1 flex flex-col h-full overflow-hidden">
+            {/* Top Header */}
+            <Header
+              nepseStatus={nepseStatus}
+              user={user}
               positions={positions}
-              orders={orders}
-              emergencyStop={emergencyStop}
-              onRefresh={() => loadPositionsAndOrders()}
-              onEmergencyStopToggle={handleToggleEmergencyStop}
+              onOpenVoice={() => setIsAssistantModalOpen(true)}
+              onOpenProfile={() => setIsProfileOpen(true)}
             />
+
+            {/* Network Alert / Retry Banner */}
+            {loadError && (
+              <div className="bg-rose-950/90 border-b border-rose-700 px-4 py-1.5 flex items-center justify-between text-xs text-rose-200 font-mono z-20 shrink-0">
+                <span>⚠️ {loadError}</span>
+                <button
+                  onClick={() => {
+                    loadMarketInfo();
+                    loadCandles();
+                  }}
+                  className="bg-rose-800 hover:bg-rose-700 text-white px-2.5 py-0.5 rounded text-[10px] font-bold"
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+
+            {/* Mobile Tab Switcher */}
+            <div className="lg:hidden flex border-b border-[#1c2438] bg-[#0c101c] shrink-0 text-xs font-mono">
+              <button
+                onClick={() => setMobileTab('chart')}
+                className={`flex-1 py-2 font-bold text-center ${
+                  mobileTab === 'chart' ? 'text-cyan-400 border-b-2 border-cyan-400 bg-cyan-950/20' : 'text-slate-400'
+                }`}
+              >
+                📈 Chart
+              </button>
+              <button
+                onClick={() => setMobileTab('watchlist')}
+                className={`flex-1 py-2 font-bold text-center ${
+                  mobileTab === 'watchlist' ? 'text-cyan-400 border-b-2 border-cyan-400 bg-cyan-950/20' : 'text-slate-400'
+                }`}
+              >
+                📋 Watchlist
+              </button>
+              <button
+                onClick={() => setMobileTab('assistant')}
+                className={`flex-1 py-2 font-bold text-center ${
+                  mobileTab === 'assistant' ? 'text-cyan-400 border-b-2 border-cyan-400 bg-cyan-950/20' : 'text-slate-400'
+                }`}
+              >
+                ✨ Shachina AI
+              </button>
+              <button
+                onClick={() => setMobileTab('trading')}
+                className={`flex-1 py-2 font-bold text-center ${
+                  mobileTab === 'trading' ? 'text-cyan-400 border-b-2 border-cyan-400 bg-cyan-950/20' : 'text-slate-400'
+                }`}
+              >
+                💼 Positions ({positions.length})
+              </button>
+            </div>
+
+            {/* 4-Quadrant Workspace */}
+            <div className="flex-1 flex overflow-hidden">
+              {/* Left: Watchlist Sidebar */}
+              <div className={`h-full ${mobileTab === 'watchlist' ? 'w-full flex' : 'hidden lg:flex lg:w-64 shrink-0'}`}>
+                <WatchlistSidebar
+                  activeMarket={activeMarket}
+                  onSelectMarket={(m) => setActiveMarket(m)}
+                  symbols={symbols}
+                  selectedSymbol={selectedSymbol}
+                  onSelectSymbol={(sym) => {
+                    setSelectedSymbol(sym);
+                    setMobileTab('chart');
+                  }}
+                />
+              </div>
+
+              {/* Center: Canvas Candlestick Chart + Data Health */}
+              <main className={`flex-1 flex-col p-2 gap-2 overflow-hidden ${mobileTab === 'chart' ? 'flex' : 'hidden lg:flex'}`}>
+                <div className="flex-1 relative overflow-hidden">
+                  <FinancialChart
+                    symbol={selectedSymbol}
+                    currency={ohlcvData?.currency || (activeMarket === 'NEPSE' ? 'NPR' : 'USD')}
+                    timeframe={timeframe}
+                    candles={ohlcvData?.candles || []}
+                    annotations={chartAnnotations}
+                    onTimeframeChange={(tf) => setTimeframe(tf)}
+                    isLoading={isLoadingChart}
+                  />
+                </div>
+                <div className="h-10 shrink-0">
+                  <DataHealthPanel report={ohlcvData?.data_quality || null} />
+                </div>
+              </main>
+
+              {/* Right: Shachina AI Assistant Panel */}
+              <div className={`h-full ${mobileTab === 'assistant' ? 'w-full flex' : 'hidden lg:flex lg:w-96 shrink-0'}`}>
+                <ShachinaAssistantPanel
+                  selectedSymbol={selectedSymbol}
+                  selectedMarket={activeMarket}
+                  user={user}
+                  isEmbedded={true}
+                  onAnnotationsReceived={(ann) => setChartAnnotations(ann)}
+                  onOrderPlaced={() => loadPositionsAndOrders()}
+                />
+              </div>
+
+              {/* Mobile-only Positions */}
+              {mobileTab === 'trading' && (
+                <div className="w-full h-full lg:hidden flex flex-col">
+                  <TradingPanel
+                    positions={positions}
+                    orders={orders}
+                    emergencyStop={emergencyStop}
+                    onRefresh={() => loadPositionsAndOrders()}
+                    onEmergencyStopToggle={handleToggleEmergencyStop}
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Bottom Quadrant: Positions, Orders & Risk Panel (Desktop) */}
+            <div className="hidden lg:block h-48 border-t border-[#1c2438] shrink-0">
+              <TradingPanel
+                positions={positions}
+                orders={orders}
+                emergencyStop={emergencyStop}
+                onRefresh={() => loadPositionsAndOrders()}
+                onEmergencyStopToggle={handleToggleEmergencyStop}
+              />
+            </div>
           </div>
         )}
       </div>
 
-      {/* ── Bottom Quadrant: Positions, Orders & Risk Panel (Desktop) ──────── */}
-      <div className="hidden lg:block h-48 border-t border-[#1c2438] shrink-0">
-        <TradingPanel
-          positions={positions}
-          orders={orders}
-          emergencyStop={emergencyStop}
-          onRefresh={() => loadPositionsAndOrders()}
-          onEmergencyStopToggle={handleToggleEmergencyStop}
-        />
-      </div>
-
-      {/* Floating Voice Assistant Trigger (Mobile shortcut) */}
-      <div className="lg:hidden fixed bottom-4 right-4 z-40">
-        <button
-          onClick={() => setMobileTab('assistant')}
-          className="flex items-center gap-2 bg-gradient-to-r from-cyan-500 to-blue-600 text-black font-extrabold px-3.5 py-2 rounded-full shadow-2xl"
-        >
-          <span>🎙️</span>
-          <span className="font-mono text-xs">SHACHINA AI</span>
-        </button>
-      </div>
-
-      {/* Trade Alert Banner — Speaks BUY/SELL setups aloud */}
+      {/* ── Modals & Banners ──────────────────────────────────────────────── */}
       <TradeAlertBanner
         alerts={activeAlerts}
         isMuted={alertsMuted}
@@ -371,12 +420,23 @@ export const App: React.FC = () => {
         onDismiss={(sym) => setActiveAlerts((prev) => prev.filter((a) => a.symbol !== sym))}
       />
 
-      {/* User Profile Modal */}
       <UserProfileModal
         isOpen={isProfileOpen}
         onClose={() => setIsProfileOpen(false)}
         user={user}
         onLogout={handleLogout}
+      />
+
+      <MemoryModal
+        isOpen={isMemoryOpen}
+        onClose={() => setIsMemoryOpen(false)}
+      />
+
+      <ProjectsModal
+        isOpen={isProjectsOpen}
+        onClose={() => setIsProjectsOpen(false)}
+        activeProjectId={activeProject?.id}
+        onSelectProject={(p) => setActiveProject(p)}
       />
     </div>
   );
