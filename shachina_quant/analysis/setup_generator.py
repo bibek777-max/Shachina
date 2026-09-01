@@ -166,9 +166,16 @@ class TradeSetupGenerator:
                 timeframe=timeframe,
                 support_lines=[ChartAnnotationLine(price=s.price, label=s.description) for s in structure.support_levels],
                 resistance_lines=[ChartAnnotationLine(price=r.price, label=r.description) for r in structure.resistance_levels],
+                fibonacci_levels=[
+                    {
+                        "ratio": f.get("ratio", 0.0) if isinstance(f, dict) else getattr(f, "ratio", 0.0),
+                        "price": f.get("price", 0.0) if isinstance(f, dict) else getattr(f, "price", 0.0),
+                        "label": f.get("label", "") if isinstance(f, dict) else getattr(f, "label", ""),
+                    }
+                    for f in structure.fibonacci_levels
+                ],
                 zones=[ChartZone(top=z.top_price, bottom=z.bottom_price, type=z.zone_type, label=z.label) for z in structure.supply_demand_zones],
                 patterns=[ChartPatternBadge(candle_index=p.candle_index, pattern=p.name, direction=p.direction, price=p.price) for p in recent_patterns],
-                fibonacci_levels=[{"ratio": f.ratio, "price": f.price, "label": f.label} for f in structure.fibonacci_levels],
             )
 
             return SetupEvaluation(
@@ -213,8 +220,15 @@ class TradeSetupGenerator:
                 ChartAnnotationLine(price=t3_price, label=f"TARGET 3 @ {t3_price:.2f}", color="#6ee7b7"),
             ],
             zones=[ChartZone(top=z.top_price, bottom=z.bottom_price, type=z.zone_type, label=z.label) for z in structure.supply_demand_zones],
+            fibonacci_levels=[
+                {
+                    "ratio": f.get("ratio", 0.0) if isinstance(f, dict) else getattr(f, "ratio", 0.0),
+                    "price": f.get("price", 0.0) if isinstance(f, dict) else getattr(f, "price", 0.0),
+                    "label": f.get("label", "") if isinstance(f, dict) else getattr(f, "label", ""),
+                }
+                for f in structure.fibonacci_levels
+            ],
             patterns=[ChartPatternBadge(candle_index=p.candle_index, pattern=p.name, direction=p.direction, price=p.price) for p in recent_patterns],
-            fibonacci_levels=[{"ratio": f.ratio, "price": f.price, "label": f.label} for f in structure.fibonacci_levels],
         )
 
         proposal = TradeProposal(

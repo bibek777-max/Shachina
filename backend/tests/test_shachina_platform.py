@@ -66,7 +66,7 @@ def test_market_structure_and_fibonacci():
     assert len(report.support_levels) > 0
     assert len(report.resistance_levels) > 0
     assert len(report.fibonacci_levels) == 7
-    assert any(f.ratio == 0.618 for f in report.fibonacci_levels)
+    assert any((f["ratio"] if isinstance(f, dict) else f.ratio) == 0.618 for f in report.fibonacci_levels)
 
 
 def test_setup_generator_and_annotations():
