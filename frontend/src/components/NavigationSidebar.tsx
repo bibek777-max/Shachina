@@ -1,11 +1,11 @@
 import React from 'react';
 import {
   MessageSquare, FolderKanban, Globe, FileText, Image as ImageIcon,
-  Sparkles, Brain, Cpu, Settings, Plus, Layers, Database
+  Sparkles, Brain, Cpu, Settings, Plus, Layers, Database, BookOpen, Bell
 } from 'lucide-react';
 import { User } from '../types';
 
-export type NavSection = 'chats' | 'projects' | 'search' | 'files' | 'images' | 'deep_research' | 'trading_ai' | 'memory' | 'settings';
+export type NavSection = 'chats' | 'projects' | 'search' | 'files' | 'images' | 'deep_research' | 'journal' | 'alerts' | 'trading_ai' | 'memory' | 'settings';
 
 interface NavigationSidebarProps {
   activeSection: NavSection;
@@ -29,6 +29,8 @@ export const NavigationSidebar: React.FC<NavigationSidebarProps> = ({
     { id: 'files' as NavSection, label: 'Files', icon: FileText },
     { id: 'images' as NavSection, label: 'Images', icon: ImageIcon },
     { id: 'deep_research' as NavSection, label: 'Deep Research', icon: Sparkles },
+    { id: 'journal' as NavSection, label: 'Trading Journal', icon: BookOpen },
+    { id: 'alerts' as NavSection, label: 'Alerts', icon: Bell },
     { id: 'trading_ai' as NavSection, label: '🧠 Trading AI', icon: Cpu, isHighlight: true },
     { id: 'memory' as NavSection, label: 'Memory', icon: Database },
   ];

@@ -85,3 +85,156 @@ async def remove_from_watchlist(
     await db.delete(item)
     await db.commit()
     return {"message": f"Removed {symbol} from watchlist."}
+
+
+# ─── User Alerts API (Isolated per User) ───────────────────────────────────────
+class CreateAlertRequest(BaseModel):
+    symbol: str
+    market: str = "NEPSE"
+    alert_type: str = "PRICE"  # 'PRICE', 'SIGNAL', 'STRUCTURE'
+    condition: str = "ABOVE"    # 'ABOVE', 'BELOW', 'BREAKOUT'
+    target_value: float
+
+
+@router.get("/alerts")
+async def get_my_alerts(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    query = select(UserAlert).where(UserAlert.user_id == current_user.id).order_by(UserAlert.created_at.desc())
+    result = await db.execute(query)
+    alerts = result.scalars().all()
+    return [
+        {
+            "id": a.id,
+            "symbol": a.symbol,
+            "market": a.market,
+            "alert_type": a.alert_type,
+            "condition": a.condition,
+            "target_value": a.target_value,
+            "is_active": a.is_active,
+            "triggered_at": a.triggered_at.isoformat() if a.triggered_at else None,
+            "created_at": a.created_at.isoformat() if a.created_at else None,
+        }
+        for a in alerts
+    ]
+
+
+@router.post("/alerts")
+async def create_alert(
+    req: CreateAlertRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    alert = UserAlert(
+        user_id=current_user.id,
+        symbol=req.symbol.upper(),
+        market=req.market.upper(),
+        alert_type=req.alert_type,
+        condition=req.condition,
+        target_value=req.target_value,
+        is_active=True,
+    )
+    db.add(alert)
+    await db.commit()
+    await db.refresh(alert)
+    return {"message": f"Alert created for {req.symbol} at {req.target_value}", "id": alert.id}
+
+
+@router.delete("/alerts/{alert_id}")
+async def delete_alert(
+    alert_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    query = select(UserAlert).where(
+        (UserAlert.id == alert_id) & (UserAlert.user_id == current_user.id)
+    )
+    res = await db.execute(query)
+    alert = res.scalars().first()
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found.")
+    await db.delete(alert)
+    await db.commit()
+    return {"message": "Alert removed."}
+
+
+# ─── User Trading Journal API (Isolated per User) ──────────────────────────────
+class CreateJournalRequest(BaseModel):
+    symbol: str
+    market: str = "NEPSE"
+    direction: str = "BUY"
+    entry_price: float
+    exit_price: Optional[float] = None
+    pnl: Optional[float] = None
+    strategy: Optional[str] = None
+    setup_score: Optional[float] = None
+    notes: Optional[str] = None
+
+
+@router.get("/journal")
+async def get_my_journal(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    query = select(UserJournal).where(UserJournal.user_id == current_user.id).order_by(UserJournal.created_at.desc())
+    result = await db.execute(query)
+    journals = result.scalars().all()
+    return [
+        {
+            "id": j.id,
+            "symbol": j.symbol,
+            "market": j.market,
+            "direction": j.direction,
+            "entry_price": j.entry_price,
+            "exit_price": j.exit_price,
+            "pnl": j.pnl,
+            "strategy": j.strategy,
+            "setup_score": j.setup_score,
+            "notes": j.notes,
+            "created_at": j.created_at.isoformat() if j.created_at else None,
+        }
+        for j in journals
+    ]
+
+
+@router.post("/journal")
+async def create_journal_entry(
+    req: CreateJournalRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    entry = UserJournal(
+        user_id=current_user.id,
+        symbol=req.symbol.upper(),
+        market=req.market.upper(),
+        direction=req.direction.upper(),
+        entry_price=req.entry_price,
+        exit_price=req.exit_price,
+        pnl=req.pnl,
+        strategy=req.strategy,
+        setup_score=req.setup_score,
+        notes=req.notes,
+    )
+    db.add(entry)
+    await db.commit()
+    await db.refresh(entry)
+    return {"message": "Journal entry saved.", "id": entry.id}
+
+
+@router.delete("/journal/{entry_id}")
+async def delete_journal_entry(
+    entry_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    query = select(UserJournal).where(
+        (UserJournal.id == entry_id) & (UserJournal.user_id == current_user.id)
+    )
+    res = await db.execute(query)
+    entry = res.scalars().first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Journal entry not found.")
+    await db.delete(entry)
+    await db.commit()
+    return {"message": "Journal entry deleted."}

@@ -109,11 +109,76 @@ export const api = {
     return res.json();
   },
 
-  async updateTradingSettings(data: any) {
-    const res = await fetchWithTimeout(`${API_BASE}/auth/trading-settings`, {
-      method: 'PUT',
+  async changePassword(current_password: string, new_password: string, confirm_password: string) {
+    const res = await fetchWithTimeout(`${API_BASE}/auth/change-password`, {
+      method: 'POST',
+      headers: this.getAuthHeaders(),
+      body: JSON.stringify({ current_password, new_password, confirm_password }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Failed to change password.' }));
+      throw new Error(err.detail || 'Failed to change password.');
+    }
+    return res.json();
+  },
+
+  async directChangePassword(username_or_email: string, current_password: string, new_password: string, confirm_password: string) {
+    const res = await fetchWithTimeout(`${API_BASE}/auth/direct-change-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username_or_email, current_password, new_password, confirm_password }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Failed to change password.' }));
+      throw new Error(err.detail || 'Failed to change password.');
+    }
+    return res.json();
+  },
+
+  async getMyAlerts() {
+    const res = await fetchWithTimeout(`${API_BASE}/user/alerts`, {
+      headers: this.getAuthHeaders(),
+    });
+    return res.json();
+  },
+
+  async createAlert(data: { symbol: string; market?: string; alert_type?: string; condition: string; target_value: number }) {
+    const res = await fetchWithTimeout(`${API_BASE}/user/alerts`, {
+      method: 'POST',
       headers: this.getAuthHeaders(),
       body: JSON.stringify(data),
+    });
+    return res.json();
+  },
+
+  async deleteAlert(alertId: number) {
+    const res = await fetchWithTimeout(`${API_BASE}/user/alerts/${alertId}`, {
+      method: 'DELETE',
+      headers: this.getAuthHeaders(),
+    });
+    return res.json();
+  },
+
+  async getMyJournal() {
+    const res = await fetchWithTimeout(`${API_BASE}/user/journal`, {
+      headers: this.getAuthHeaders(),
+    });
+    return res.json();
+  },
+
+  async createJournalEntry(data: any) {
+    const res = await fetchWithTimeout(`${API_BASE}/user/journal`, {
+      method: 'POST',
+      headers: this.getAuthHeaders(),
+      body: JSON.stringify(data),
+    });
+    return res.json();
+  },
+
+  async deleteJournalEntry(entryId: number) {
+    const res = await fetchWithTimeout(`${API_BASE}/user/journal/${entryId}`, {
+      method: 'DELETE',
+      headers: this.getAuthHeaders(),
     });
     return res.json();
   },

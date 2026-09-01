@@ -11,6 +11,8 @@ import { NavigationSidebar, NavSection } from './components/NavigationSidebar';
 import { MainChatView } from './components/MainChatView';
 import { MemoryModal } from './components/MemoryModal';
 import { ProjectsModal } from './components/ProjectsModal';
+import { JournalModal } from './components/JournalModal';
+import { AlertsModal } from './components/AlertsModal';
 import { tradeAlertEngine, TradeSignal } from './services/tradeAlertEngine';
 
 import { AuthLogin } from './components/auth/AuthLogin';
@@ -42,6 +44,8 @@ export const App: React.FC = () => {
   const [activeNav, setActiveNav] = useState<NavSection>('chats');
   const [isMemoryOpen, setIsMemoryOpen] = useState<boolean>(false);
   const [isProjectsOpen, setIsProjectsOpen] = useState<boolean>(false);
+  const [isJournalOpen, setIsJournalOpen] = useState<boolean>(false);
+  const [isAlertsOpen, setIsAlertsOpen] = useState<boolean>(false);
   const [activeProject, setActiveProject] = useState<Project | null>(null);
 
   // Trading Dashboard State
@@ -204,6 +208,14 @@ export const App: React.FC = () => {
     }
     if (sec === 'projects') {
       setIsProjectsOpen(true);
+      return;
+    }
+    if (sec === 'journal') {
+      setIsJournalOpen(true);
+      return;
+    }
+    if (sec === 'alerts') {
+      setIsAlertsOpen(true);
       return;
     }
     if (sec === 'settings') {
@@ -437,6 +449,16 @@ export const App: React.FC = () => {
         onClose={() => setIsProjectsOpen(false)}
         activeProjectId={activeProject?.id}
         onSelectProject={(p) => setActiveProject(p)}
+      />
+
+      <JournalModal
+        isOpen={isJournalOpen}
+        onClose={() => setIsJournalOpen(false)}
+      />
+
+      <AlertsModal
+        isOpen={isAlertsOpen}
+        onClose={() => setIsAlertsOpen(false)}
       />
     </div>
   );

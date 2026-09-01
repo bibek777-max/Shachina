@@ -183,14 +183,84 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
           {/* Security Tab */}
           {tab === 'security' && (
-            <div className="space-y-3">
+            <div className="space-y-4">
               <div className="bg-[#141b2e] p-3 rounded-xl border border-[#1f2b45] space-y-1">
                 <span className="text-slate-400 text-[10px] block">PASSWORD ENCRYPTION</span>
                 <span className="text-emerald-400 font-bold">PBKDF2-HMAC-SHA256 (100,000 Rounds)</span>
               </div>
-              <div className="bg-[#141b2e] p-3 rounded-xl border border-[#1f2b45] space-y-1">
-                <span className="text-slate-400 text-[10px] block">SESSION TOKEN</span>
-                <span className="text-cyan-300">Signed JWT (Auto-Expiring)</span>
+
+              {/* Change Password Sub-form */}
+              <div className="p-3.5 bg-[#12192b] border border-[#212f4c] rounded-xl space-y-3 font-mono text-xs">
+                <h4 className="font-bold text-cyan-300 text-xs flex items-center gap-1.5 uppercase">
+                  <Lock className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Update Password</span>
+                </h4>
+
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    const form = e.target as HTMLFormElement;
+                    const cur = (form.elements.namedItem('current_pass') as HTMLInputElement).value;
+                    const n1 = (form.elements.namedItem('new_pass') as HTMLInputElement).value;
+                    const n2 = (form.elements.namedItem('confirm_pass') as HTMLInputElement).value;
+                    if (n1 !== n2) {
+                      alert('New passwords do not match.');
+                      return;
+                    }
+                    if (n1.length < 6) {
+                      alert('New password must be at least 6 characters.');
+                      return;
+                    }
+                    try {
+                      await api.changePassword(cur, n1, n2);
+                      setSavedMsg('Password updated successfully.');
+                      form.reset();
+                      setTimeout(() => setSavedMsg(null), 3000);
+                    } catch (err: any) {
+                      alert(err.message || 'Failed to update password.');
+                    }
+                  }}
+                  className="space-y-2.5"
+                >
+                  <div>
+                    <label className="text-slate-400 block mb-1 text-[11px]">Current Password</label>
+                    <input
+                      name="current_pass"
+                      type="password"
+                      required
+                      placeholder="Current password"
+                      className="w-full bg-[#162035] border border-[#243354] rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-cyan-400"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-slate-400 block mb-1 text-[11px]">New Password</label>
+                      <input
+                        name="new_pass"
+                        type="password"
+                        required
+                        placeholder="Min 6 chars"
+                        className="w-full bg-[#162035] border border-[#243354] rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-cyan-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-slate-400 block mb-1 text-[11px]">Confirm New</label>
+                      <input
+                        name="confirm_pass"
+                        type="password"
+                        required
+                        placeholder="Confirm"
+                        className="w-full bg-[#162035] border border-[#243354] rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-cyan-400"
+                      />
+                    </div>
+                  </div>
+                  <button
+                    type="submit"
+                    className="w-full py-2 bg-gradient-to-r from-cyan-400 to-blue-500 hover:from-cyan-300 hover:to-blue-400 text-black font-extrabold rounded-lg transition-all"
+                  >
+                    CHANGE PASSWORD
+                  </button>
+                </form>
               </div>
             </div>
           )}

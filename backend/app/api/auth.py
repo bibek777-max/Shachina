@@ -90,6 +90,19 @@ class ResetPasswordRequest(BaseModel):
     confirm_password: str
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+    confirm_password: str
+
+
+class DirectChangePasswordRequest(BaseModel):
+    username_or_email: str
+    current_password: str
+    new_password: str
+    confirm_password: str
+
+
 class UpdatePreferencesRequest(BaseModel):
     primary_market: Optional[str] = None
     supported_markets: Optional[List[str]] = None
@@ -180,9 +193,17 @@ async def login(
     _check_rate_limit(ident)
     _check_rate_limit(client_ip)
 
+    # Support login via username ('shachina.ai', 'bibek') or email
+    is_owner_ident = ident in ("shachina.ai", "shachina", "bibek", "bibek@shachina.ai")
     query = (
         select(User)
-        .where((User.username == ident) | (User.email == ident))
+        .where(
+            (User.username == ident) |
+            (User.email == ident) |
+            (User.username == "shachina.ai") |
+            (User.username == "bibek") if is_owner_ident else
+            (User.username == ident) | (User.email == ident)
+        )
         .options(
             selectinload(User.preferences),
             selectinload(User.trading_settings),
@@ -220,6 +241,56 @@ async def login(
             "onboarded": onboarded,
         }
     }
+
+
+@router.post("/change-password")
+async def change_password(
+    req: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    if not verify_password(req.current_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="Current password is incorrect.")
+    if req.new_password != req.confirm_password:
+        raise HTTPException(status_code=400, detail="New passwords do not match.")
+    if len(req.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters.")
+
+    current_user.hashed_password = hash_password(req.new_password)
+    await db.commit()
+    return {"message": "Password changed successfully."}
+
+
+@router.post("/direct-change-password")
+async def direct_change_password(
+    req: DirectChangePasswordRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    ident = req.username_or_email.strip().lower()
+    is_owner_ident = ident in ("shachina.ai", "shachina", "bibek", "bibek@shachina.ai")
+    query = (
+        select(User)
+        .where(
+            (User.username == ident) |
+            (User.email == ident) |
+            (User.username == "shachina.ai") |
+            (User.username == "bibek") if is_owner_ident else
+            (User.username == ident) | (User.email == ident)
+        )
+    )
+    result = await db.execute(query)
+    user = result.scalars().first()
+
+    if not user or not verify_password(req.current_password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="Invalid username or current password.")
+    if req.new_password != req.confirm_password:
+        raise HTTPException(status_code=400, detail="New passwords do not match.")
+    if len(req.new_password) < 6:
+        raise HTTPException(status_code=400, detail="New password must be at least 6 characters.")
+
+    user.hashed_password = hash_password(req.new_password)
+    await db.commit()
+    return {"message": "Password changed successfully. You may now log in with your new password."}
 
 
 @router.post("/forgot-password")
@@ -382,7 +453,7 @@ async def seed_bibek_user(db: AsyncSession):
     initial_password = "Bibek98@#$"
     query = (
         select(User)
-        .where((User.username == "bibek") | (User.email == "bibek@shachina.ai"))
+        .where((User.username == "shachina.ai") | (User.username == "bibek") | (User.email == "bibek@shachina.ai"))
         .options(selectinload(User.trading_settings))
     )
     result = await db.execute(query)
@@ -390,7 +461,7 @@ async def seed_bibek_user(db: AsyncSession):
 
     if not user:
         bibek = User(
-            username="bibek",
+            username="shachina.ai",
             email="bibek@shachina.ai",
             full_name="Bibek",
             phone_number="+977-9800000000",
