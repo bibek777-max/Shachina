@@ -313,6 +313,195 @@ def _resolve_global_time(msg: str) -> Optional[tuple[str, str]]:
     return text, speech
 
 
+# ─── Roman Nepali / Typo Normalizer ──────────────────────────────────────────
+_ROMAN_NEPALI_FILLER = re.compile(
+    r'\b(vaneko\s+k\s+ho|vaneko\s+ke\s+ho|bhaneko\s+k\s+ho|bhaneko\s+ke\s+ho|'
+    r'ko\s+meaning\s+k\s+ho|ko\s+meaning\s+ke\s+ho|bujhauna|bujhau|bujhaidos|'
+    r'explain\s+gara|kasari\s+kam\s+garxa|prove\s+gara|prove\s+garideu|'
+    r'k\s+ho|ke\s+ho|kya\s+hai|kya\s+hota\s+hai|kya\s+hai|'
+    r'ko\s+baare\s+ma\s+bana|ko\s+baare\s+ma\s+batau|batau|bana|'
+    r'k\s+xa|ke\s+xa|kati\s+xa|kati\s+cha|kasto\s+xa|kasto\s+cha|'
+    r'ahile\s+kati\s+xa|halkhabar\s+k\s+xa)\b',
+    re.IGNORECASE
+)
+
+_ROMAN_NEPALI_TYPO_MAP = {
+    # Subject typos
+    'thermodinmics': 'thermodynamics', 'thermodynamic': 'thermodynamics',
+    'phyics': 'physics', 'physic': 'physics', 'phyics': 'physics',
+    'matematics': 'mathematics', 'mathmatics': 'mathematics',
+    'chemsitry': 'chemistry', 'chemstry': 'chemistry',
+    'biologi': 'biology', 'biollogy': 'biology',
+    # Common Roman Nepali typos
+    'bujdina': 'bujhina', 'bujhidina': 'bujhina',
+    'vanxu': 'vanchha', 'chha': 'cha',
+    'garnaparxa': 'garnu parcha', 'garxu': 'garchu',
+    'tradingg': 'trading', 'tredaing': 'trading',
+}
+
+def _clean_roman_nepali_query(text: str) -> str:
+    """
+    Strip Roman Nepali filler phrases and fix common typos so the core
+    topic can be properly searched / answered.
+    e.g. 'physics vaneko k ho' → 'physics'
+         'cp cv r prove gara'  → 'cp cv r'
+         'bitcoin ahile kati xa?' → 'bitcoin price'
+    """
+    cleaned = text.strip()
+    # Fix known typos first
+    for wrong, right in _ROMAN_NEPALI_TYPO_MAP.items():
+        cleaned = re.sub(r'\b' + re.escape(wrong) + r'\b', right, cleaned, flags=re.I)
+    # Remove filler phrases
+    cleaned = _ROMAN_NEPALI_FILLER.sub('', cleaned).strip(' ?,.')
+    # Normalize whitespace
+    cleaned = re.sub(r'\s{2,}', ' ', cleaned).strip()
+    return cleaned or text
+
+
+def _resolve_context_topic(history: List[Dict]) -> str:
+    """
+    Extract the topic from recent conversation history for follow-up questions.
+    E.g. if last messages were about 'thermodynamics', and user says 'formula?',
+    return 'thermodynamics formula'.
+    """
+    if not history:
+        return ""
+    recent = history[-6:]  # Last 3 turns
+    topic_words = []
+    # Extract nouns/topics from recent assistant/user messages
+    for h in reversed(recent):
+        content = h.get("content", "").strip()
+        if not content:
+            continue
+        # Skip very short follow-ups themselves
+        if len(content) < 60:
+            continue
+        # Take the first 120 chars as topic context
+        topic_words.append(content[:120])
+        if len(topic_words) >= 2:
+            break
+    return " | ".join(reversed(topic_words))
+
+
+# ─── Live Crypto Price Fetcher ────────────────────────────────────────────────
+_CRYPTO_SYMBOL_MAP = {
+    'bitcoin': 'BTC', 'btc': 'BTC',
+    'ethereum': 'ETH', 'eth': 'ETH',
+    'solana': 'SOL', 'sol': 'SOL',
+    'bnb': 'BNB', 'binance coin': 'BNB',
+    'xrp': 'XRP', 'ripple': 'XRP',
+    'dogecoin': 'DOGE', 'doge': 'DOGE',
+    'cardano': 'ADA', 'ada': 'ADA',
+    'avalanche': 'AVAX', 'avax': 'AVAX',
+    'tron': 'TRX', 'trx': 'TRX',
+    'litecoin': 'LTC', 'ltc': 'LTC',
+    'polkadot': 'DOT', 'dot': 'DOT',
+    'shiba': 'SHIB', 'shib': 'SHIB',
+    'polygon': 'MATIC', 'matic': 'MATIC',
+    'chainlink': 'LINK', 'link': 'LINK',
+    'near': 'NEAR', 'ton': 'TON',
+    'pepe': 'PEPE', 'sui': 'SUI',
+    'aptos': 'APT', 'apt': 'APT',
+}
+
+async def _fetch_live_crypto_price(query: str) -> Optional[str]:
+    """
+    Fetch real-time crypto prices from Binance public API.
+    Falls back to CoinGecko. Returns formatted markdown or None.
+    Never returns invented prices.
+    """
+    ml = query.lower()
+    symbol = None
+    coin_name = None
+    for name, sym in _CRYPTO_SYMBOL_MAP.items():
+        if name in ml:
+            symbol = sym
+            coin_name = name
+            break
+
+    if not symbol:
+        # Check direct symbol mention: 'BTC', 'ETH' etc.
+        for sym in ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'TRX', 'LTC']:
+            if re.search(r'\b' + sym + r'\b', query, re.IGNORECASE):
+                symbol = sym
+                coin_name = sym.lower()
+                break
+
+    if not symbol:
+        return None
+
+    NPR_RATE = 133.5  # Approx USD→NPR conversion
+
+    # Try Binance first (no key needed, very fast)
+    try:
+        binance_sym = f"{symbol}USDT"
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            res = await client.get(
+                f"https://api.binance.com/api/v3/ticker/price?symbol={binance_sym}",
+                headers={"User-Agent": "ShachinaAI/2.0"}
+            )
+            if res.status_code == 200:
+                price_usd = float(res.json().get("price", 0))
+                if price_usd > 0:
+                    price_npr = price_usd * NPR_RATE
+                    # Also get 24h change
+                    ticker_res = await client.get(
+                        f"https://api.binance.com/api/v3/ticker/24hr?symbol={binance_sym}",
+                        headers={"User-Agent": "ShachinaAI/2.0"}
+                    )
+                    change_pct = ""
+                    if ticker_res.status_code == 200:
+                        td = ticker_res.json()
+                        chg = float(td.get("priceChangePercent", 0))
+                        arrow = "🟢 ▲" if chg >= 0 else "🔴 ▼"
+                        change_pct = f"\n• **24h Change**: {arrow} {abs(chg):.2f}%"
+
+                    return (
+                        f"💰 **{symbol} (Live Price — Binance)**\n\n"
+                        f"• **Price (USD)**: `${price_usd:,.2f}`\n"
+                        f"• **Price (NPR)**: `NPR {price_npr:,.0f}` *(est. @ 1 USD = {NPR_RATE} NPR)*"
+                        f"{change_pct}\n\n"
+                        f"*Source: Binance Real-Time | {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}*"
+                    )
+    except Exception:
+        pass
+
+    # Fallback: CoinGecko (free tier)
+    try:
+        cg_id_map = {
+            'BTC': 'bitcoin', 'ETH': 'ethereum', 'SOL': 'solana',
+            'BNB': 'binancecoin', 'XRP': 'ripple', 'DOGE': 'dogecoin',
+            'ADA': 'cardano', 'AVAX': 'avalanche-2', 'TRX': 'tron',
+            'LTC': 'litecoin', 'DOT': 'polkadot', 'SHIB': 'shiba-inu',
+            'MATIC': 'matic-network', 'LINK': 'chainlink', 'NEAR': 'near',
+            'APT': 'aptos', 'SUI': 'sui', 'PEPE': 'pepe',
+        }
+        cg_id = cg_id_map.get(symbol, symbol.lower())
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            res = await client.get(
+                f"https://api.coingecko.com/api/v3/simple/price?ids={cg_id}&vs_currencies=usd&include_24hr_change=true",
+                headers={"User-Agent": "ShachinaAI/2.0"}
+            )
+            if res.status_code == 200:
+                data = res.json().get(cg_id, {})
+                price_usd = data.get("usd", 0)
+                chg = data.get("usd_24h_change", 0)
+                if price_usd > 0:
+                    price_npr = price_usd * NPR_RATE
+                    arrow = "🟢 ▲" if chg >= 0 else "🔴 ▼"
+                    return (
+                        f"💰 **{symbol} (Live Price — CoinGecko)**\n\n"
+                        f"• **Price (USD)**: `${price_usd:,.2f}`\n"
+                        f"• **Price (NPR)**: `NPR {price_npr:,.0f}` *(est.)*\n"
+                        f"• **24h Change**: {arrow} {abs(chg):.2f}%\n\n"
+                        f"*Source: CoinGecko Real-Time | {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}*"
+                    )
+    except Exception:
+        pass
+
+    return None
+
+
 # ─── Master System Prompt ─────────────────────────────────────────────────────
 def _build_system_prompt(
     owner_name: str,
@@ -348,6 +537,7 @@ def _build_system_prompt(
 
 ## CORE IDENTITY & ANSWERING PRINCIPLES
 You are a highly capable, natural general-purpose AI assistant FIRST (like ChatGPT), and an advanced trading intelligence system SECOND.
+You understand ALL legitimate topics: Science, Math, Physics, Chemistry, Biology, History, Geography, Technology, Programming, AI, Business, Finance, Trading, NEPSE, Crypto, News, Sports, Education, Languages, Translation, Writing, Coding, Engineering, Law, Travel, and everyday questions.
 
 ### 1. ABSOLUTELY NO FORCED TEMPLATES
 - NEVER automatically format answers with rigid sections like "Core Understanding", "Breakdown", "Clarity", "Key Points", "Summary", or "Optimization".
@@ -355,20 +545,30 @@ You are a highly capable, natural general-purpose AI assistant FIRST (like ChatG
 - Do NOT use repetitive filler phrases like "Certainly!", "Of course!", "Here is a breakdown:", or "Let's dive in:". Speak naturally like an intelligent human partner.
 
 ### 2. DIRECT ANSWER FIRST & ADAPTIVE LENGTH
-- Simple factual questions (e.g. "What is gravity?", "Who was Einstein?", "2+2?"): Answer directly and concisely first in 1–3 clear sentences. Add a simple everyday example only if helpful.
-- Real-time time & date questions: Provide exact accurate timestamps across requested cities or global timezones.
-- Math / Calculations: State the final answer clearly with step-by-step reasoning.
-- Code queries: Provide clean, working, idiomatic code with brief explanation of key logic.
-- Translation queries: Provide the direct, accurate translation without unsolicited commentary.
-- Learning / Teaching queries: Explain progressively — start with the basic definition, explain the concept simply, provide an everyday intuitive example, then mention key principles/laws.
-- Complex / Deep queries: Provide a well-structured, detailed explanation with examples.
+- Simple factual questions (e.g. "What is gravity?", "Who was Einstein?", "2+2?"): Answer directly and concisely in 1–3 clear sentences.
+- Real-time time & date questions: Provide exact accurate timestamps.
+- Math / Calculations: State the final answer with step-by-step reasoning.
+- Code queries: Provide complete, working, runnable code immediately. No descriptions first.
+- Translation queries: Provide the direct translation without commentary.
+- Learning / Teaching queries: Explain progressively — definition first, then simple analogy, then example.
+- Complex / Deep queries: Well-structured, detailed explanation with examples.
+- **Derivation / Proof queries** (e.g. "Cp - Cv = R prove gara", "yo formula kasari ayo"): Actually DERIVE it step by step from first principles. Show every algebraic step. Use math notation. Do NOT describe what you'll do — just derive it directly.
+- **Code requests** (e.g. "python calculator banaideu"): Write the COMPLETE, RUNNABLE Python/code immediately. Include proper input/output, error handling, and brief comment for key lines.
 
 ### 3. CONVERSATION CONTEXT & MULTI-TURN AWARENESS
-- Always remember what was discussed previously in the conversation history.
-- When the user asks a follow-up, answer directly about that specific follow-up using previous context without repeating the entire background.
+- Always use conversation history to understand follow-up questions.
+- Follow-ups like "formula?", "example deu", "simple ma vana", "yo formula kasari ayo", "yesko main branches?", "mechanics bujhau", "aru example" — answer using the TOPIC from previous messages.
+- Never ask "what topic are you referring to?" if the conversation history makes it obvious.
 
-### 4. LANGUAGE & TONE
+### 4. LANGUAGE & TONE — CRITICAL
 - {lang_inst}
+- **LANGUAGE MATCHING RULE**: Detect what language/style the user wrote in and match it:
+  * Roman Nepali (e.g. "physics vaneko k ho", "bitcoin kati xa", "bujhina") → Reply in natural Nepali: "Physics भनेको..." / "Bitcoin को हालको मूल्य..."
+  * Nepali Devanagari → Reply in Devanagari
+  * Hindi → Reply in Hindi
+  * English → Reply in English
+  * Mixed / Hinglish → Match the same mix
+- **Natural Nepali phrases**: "यो भनेको...", "सरल भाषामा...", "उदाहरणका लागि...", "मुख्य कुरा के हो भने...", "सजिलो तरिकाले भन्नु पर्दा..."
 - Intelligent, calm, helpful, friendly, natural, respectful, and honest.
 - When user asks about trading: switch to Trading Intelligence Mode.
 
@@ -675,6 +875,8 @@ async def assistant_chat(
 ):
     msg = req.message.strip()
     msg_lower = msg.lower()
+    # Normalize Roman Nepali filler / typos so "physics vaneko k ho" → "physics"
+    msg_cleaned = _clean_roman_nepali_query(msg)
     language = req.language or (current_user.preferences.language if current_user.preferences else "en")
     analysis_mode = req.analysis_mode or getattr(current_user.preferences, "analysis_mode", "pro")
     owner_name = current_user.full_name or "Bibek"
@@ -866,18 +1068,54 @@ async def assistant_chat(
         sources_list: Optional[List[Dict[str, str]]] = None
         thinking_status_str: str = "🧠 Thinking..."
 
+        # 0. Live Crypto Price Fast Path — check before anything else
+        _is_crypto_query = any(k in msg_lower for k in [
+            'bitcoin', 'btc', 'ethereum', 'eth', 'solana', 'sol', 'bnb', 'xrp', 'ripple',
+            'dogecoin', 'doge', 'cardano', 'ada', 'avax', 'litecoin', 'ltc', 'crypto price',
+            'coin price', 'kati xa', 'kati cha', 'price kati', 'ahile kati', 'live price',
+            'current price of', 'price of btc', 'price of eth', 'price of bitcoin',
+        ])
+        if _is_crypto_query:
+            thinking_status_str = "📊 Analyzing market..."
+            crypto_result = await _fetch_live_crypto_price(msg)
+            if crypto_result:
+                resp_text = crypto_result
+                speech_text = _clean_for_tts(crypto_result)
+                # Return immediately — no need for AI
+                return ChatResponse(
+                    response=resp_text, speech_text=speech_text, language=language,
+                    symbol=symbol, market=market, conversation_id=req.conversation_id,
+                    chart_annotations=chart_annotations, trade_proposal=trade_proposal,
+                    data_quality_score=dq_score, thinking_status=thinking_status_str,
+                    sources=None, timestamp=now_iso, cached=False,
+                )
+
         # 1. Live Web Search & Deep Research Integration
         search_context = ""
+        _news_triggers_roman = [
+            "news", "samachar", "halkhabar", "k bhayo", "k xa", "nepal ma k",
+            "aaja k bhayo", "latest", "live", "ajako", "aajako",
+        ]
+        _market_triggers_roman = [
+            "market", "stock price", "share price", "nepse", "nifty", "sensex",
+            "nasdaq", "sp500", "s&p", "oil price", "gold price", "dollar",
+        ]
         should_search = req.web_search or req.deep_research or any(
             k in msg_lower for k in [
                 "search the web", "search web", "google", "search google", "search on google",
                 "latest news", "today news", "bitcoin price", "crypto price", "nepse news",
-                "latest updates", "current price", "who won", "live score", "weather in"
+                "latest updates", "current price", "who won", "live score", "weather in",
+                # Roman Nepali news triggers
+                "nepal news", "nepal ko khabar", "nepal ko news", "nepal ma ke bhayo",
+                "aaja ko khabar", "ajako samachar", "samachar k xa", "halkhabar k xa",
+                "breaking news", "world news", "global news", "new update",
+                # Market triggers
+                "share bazar", "share market", "nepse index", "nepse ko",
             ]
-        )
+        ) or any(k in msg_lower for k in _news_triggers_roman + _market_triggers_roman)
         if should_search:
             thinking_status_str = "🔎 Searching Google & verified web sources..."
-            search_summary, sources_list = await _search_web_live(msg, max_results=6 if req.deep_research else 4)
+            search_summary, sources_list = await _search_web_live(msg_cleaned, max_results=6 if req.deep_research else 4)
             search_context = search_summary
 
         # 2. File Context Attachment
@@ -916,6 +1154,19 @@ async def assistant_chat(
                 mem_lines = [f"• {m.memory_key}: {m.memory_value}" for m in mems]
                 memory_context = f"\n[USER PERSONALIZED MEMORY & PREFERENCES]:\n" + "\n".join(mem_lines) + "\n"
 
+        # 6. Multi-turn context injection for follow-up questions
+        context_topic = ""
+        _is_followup = any(k in msg_lower for k in [
+            "formula", "example deu", "example", "simple ma", "simple bana",
+            "bujhina", "bujhidina", "yo formula", "kasari ayo", "prove gara",
+            "aru example", "main branches", "branches", "mechanics",
+            "yo bujhina", "malai bujhina", "feri explain", "ek palta",
+        ]) and len(msg.split()) <= 8
+        if _is_followup and req.history:
+            context_topic = _resolve_context_topic(req.history)
+            if context_topic:
+                context_topic = f"\n[CONVERSATION CONTEXT for follow-up resolution]:\n{context_topic}\n"
+
         ltp = candles[-1].close if candles else 540.0
         market_context = (
             f"[LIVE MARKET DATA]: {market} | Symbol: {symbol} | LTP: NPR {ltp:.2f} | "
@@ -924,6 +1175,7 @@ async def assistant_chat(
             f"{file_context}"
             f"{project_context}"
             f"{memory_context}"
+            f"{context_topic}"
         )
         system_prompt = _build_system_prompt(owner_name, language, analysis_mode, market_context)
 
@@ -938,11 +1190,13 @@ async def assistant_chat(
         except Exception:
             pass
 
+        # Call AI with cleaned message so Roman Nepali filler doesn't confuse it
+        effective_msg = msg_cleaned if msg_cleaned != msg and len(msg_cleaned) > 2 else msg
         ai_res = await _call_gemini(system_prompt, req.history or [], msg, image_data=req.image_data, custom_key=req.api_key)
         if not ai_res:
             ai_res = await _call_openai(system_prompt, req.history or [], msg, image_data=req.image_data, custom_key=req.api_key)
         if not ai_res:
-            uni_res = await _universal_knowledge_answer(msg, owner_name)
+            uni_res = await _universal_knowledge_answer(msg_cleaned, owner_name)
             if uni_res:
                 resp_text, speech_text = uni_res
             else:

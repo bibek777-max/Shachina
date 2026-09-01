@@ -17,6 +17,7 @@ class Settings:
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "production")
     
     SECRET_KEY: str = os.getenv("SHACHINA_SECRET_KEY", os.getenv("SECRET_KEY", "shachina_ultra_secure_institutional_secret_key_2026"))
+    RECOVERY_SECRET: str = os.getenv("SHACHINA_RECOVERY_KEY", os.getenv("RECOVERY_SECRET", "SHACHINA_OWNER_RECOVERY_2026"))
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", str(60 * 24 * 30)))  # 30 days
     
