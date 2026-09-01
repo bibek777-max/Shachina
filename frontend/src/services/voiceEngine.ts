@@ -58,17 +58,21 @@ export class ShachinaVoiceEngine {
     const all = this.synth ? this.synth.getVoices() : [];
     if (!all.length) return null;
 
-    const femaleHints = ['samantha','victoria','karen','tessa','moira','fiona',
-      'zira','lekha','veena','google uk english female','google us english female',
-      'google us english','female','woman'];
+    const femaleHints = [
+      'siri', 'ava', 'allison', 'samantha', 'victoria', 'karen', 'tessa', 'moira', 'fiona',
+      'zira', 'lekha', 'veena', 'swara', 'google uk english female', 'google us english female',
+      'google us english', 'female', 'woman'
+    ];
 
     const langPrefix = lang === 'ne' ? 'hi' : lang === 'hi' ? 'hi' : 'en';
 
-    // Priority 1: language + female
+    // Priority 1: language + Siri / female
     let v = all.find(x => x.lang.toLowerCase().startsWith(langPrefix) &&
       femaleHints.some(h => x.name.toLowerCase().includes(h)));
-    // Priority 2: any female
+    // Priority 2: any female voice across the system (e.g. Siri or Samantha on Mac/iOS)
     if (!v) v = all.find(x => femaleHints.some(h => x.name.toLowerCase().includes(h)));
+    // Priority 3: matching language voice
+    if (!v) v = all.find(x => x.lang.toLowerCase().startsWith(langPrefix));
     // Fallback: first available
     return v || all[0];
   }

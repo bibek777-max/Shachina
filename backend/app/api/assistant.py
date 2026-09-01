@@ -107,6 +107,17 @@ def _classify_intent(msg_lower: str) -> str:
       • 'EXPLICIT_TRADE_DECISION' — explicit requests for buy/sell setups ("Can I take trade?", "Should I buy?")
       • 'GENERAL_CONVERSATION'    — market discussions, loss inquiries, global news, science, math, code, general chat
     """
+    # P&L / Profit / Loss query — user asking about their own trade results
+    pnl_keywords = [
+        "kati profit", "kati loss", "kati kamaye", "kati gumaye", "aaja profit",
+        "aaja loss", "profit kati", "loss kati", "how much profit", "how much loss",
+        "total profit", "total loss", "mero profit", "mero loss", "aaj kitna",
+        "today profit", "today loss", "p&l", "pnl", "profit vayo", "loss vayo",
+        "profit bhayo", "loss bhayo", "net profit", "net loss"
+    ]
+    if any(k in msg_lower for k in pnl_keywords):
+        return "PNL_QUERY"
+
     exec_keywords = [
         "take the trade", "place the trade", "place it", "confirm order",
         "execute trade", "buy it now", "sell it now"
@@ -463,8 +474,90 @@ async def assistant_chat(
     resp_text: str = ""
     speech_text: str = ""
 
+    # ── ROUTE 0: P&L QUERY — User Asking About Their Profit/Loss ──────────────
+    if intent == "PNL_QUERY":
+        from backend.app.db.models import TradingPosition
+        from shachina_quant.core.models import MarketType as MT
+        pos_query = select(TradingPosition).where(TradingPosition.user_id == current_user.id)
+        all_positions = (await db.execute(pos_query)).scalars().all()
+        open_pos  = [p for p in all_positions if p.status == "OPEN"]
+        closed_pos = [p for p in all_positions if p.status == "CLOSED"]
+
+        # Calculate live unrealized PnL for open positions
+        total_unrealized = 0.0
+        pos_lines = []
+        for p in open_pos:
+            curr_p = p.entry_price
+            try:
+                prov = MarketDataProviderRegistry.get_provider(MT(p.market))
+                ohlcv2 = prov.get_historical_ohlcv(p.symbol, limit=2)
+                if ohlcv2.latest_candle:
+                    curr_p = ohlcv2.latest_candle.close
+            except Exception:
+                pass
+            upnl = (curr_p - p.entry_price) * p.quantity if p.direction == "LONG" else (p.entry_price - curr_p) * p.quantity
+            total_unrealized += upnl
+            sign = "+" if upnl >= 0 else ""
+            emoji = "🟢" if upnl >= 0 else "🔴"
+            pos_lines.append(f"  {emoji} **{p.symbol}** ({p.direction}): Entry NPR {p.entry_price:.2f} → Current NPR {curr_p:.2f} | PnL: **{sign}NPR {upnl:,.2f}**")
+
+        total_realized = sum(p.realized_pnl or 0.0 for p in closed_pos)
+        net_pnl = total_unrealized + total_realized
+
+        if language == "en":
+            pnl_status = "Profit" if net_pnl >= 0 else "Loss"
+            pos_text = "\n".join(pos_lines) if pos_lines else "  📭 No open positions currently."
+            resp_text = (
+                f"💰 **P&L Summary for {owner_name}:**\n\n"
+                f"{pos_text}\n\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"📊 **Unrealized PnL (Open)**: {'🟢 +' if total_unrealized >= 0 else '🔴 '}NPR {total_unrealized:,.2f}\n"
+                f"✅ **Realized PnL (Closed)**: {'🟢 +' if total_realized >= 0 else '🔴 '}NPR {total_realized:,.2f}\n"
+                f"**Net Result**: **{'🟢 +NPR ' if net_pnl >= 0 else '🔴 -NPR '}{abs(net_pnl):,.2f}**\n\n"
+                + ("💡 *Solid performance. Maintain risk controls and let winners run.*" if net_pnl >= 0
+                   else "💡 *Protect your capital. Wait patiently for high-probability setups.*")
+            )
+            speech_text = (
+                f"You are currently at a net {pnl_status} of {abs(net_pnl):,.0f} rupees. "
+                f"{'Great job maintaining discipline.' if net_pnl >= 0 else 'Stay disciplined and protect your capital.'}"
+            )
+        elif language == "hi":
+            pnl_status = "मुनाफा (Profit)" if net_pnl >= 0 else "नुकसान (Loss)"
+            pos_text = "\n".join(pos_lines) if pos_lines else "  📭 अभी कोई ओपन पोजीशन नहीं है।"
+            resp_text = (
+                f"💰 **{owner_name} की आज की P&L रिपोर्ट:**\n\n"
+                f"{pos_text}\n\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"📊 **Unrealized PnL (चालू ट्रेड)**: {'🟢 +' if total_unrealized >= 0 else '🔴 '}NPR {total_unrealized:,.2f}\n"
+                f"✅ **Realized PnL (पूरा हुआ ट्रेड)**: {'🟢 +' if total_realized >= 0 else '🔴 '}NPR {total_realized:,.2f}\n"
+                f"**कुल नतीजा**: **{pnl_status} NPR {net_pnl:,.2f}**\n\n"
+                + ("💡 *शानदार! अपने स्टॉप लॉस को ट्रेल करें और टारगेट का इंतजार करें।*" if net_pnl >= 0
+                   else "💡 *संयम रखें। रिवेंज ट्रेडिंग न करें और सही सेटअप का इंतजार करें।*")
+            )
+            speech_text = (
+                f"आपका कुल {'मुनाफा' if net_pnl >= 0 else 'नुकसान'} {abs(net_pnl):,.0f} रुपये है। "
+                f"{'अनुशासन के साथ होल्ड करें।' if net_pnl >= 0 else 'जल्दबाजी में कोई नया ट्रेड न लें।'}"
+            )
+        else: # Default Nepali + Hindi mix
+            pnl_emoji = "🟢 नाफा (Profit)" if net_pnl >= 0 else "🔴 घाटा (Loss)"
+            pos_text = "\n".join(pos_lines) if pos_lines else "  📭 अहिले कुनै Open Position छैन।"
+            resp_text = (
+                f"💰 **{owner_name} को आजको P&L Report:**\n\n"
+                f"{pos_text}\n\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"📊 **Unrealized PnL (Open Positions)**: {'🟢 +' if total_unrealized >= 0 else '🔴 '}NPR {total_unrealized:,.2f}\n"
+                f"✅ **Realized PnL (Closed Trades)**: {'🟢 +' if total_realized >= 0 else '🔴 '}NPR {total_realized:,.2f}\n"
+                f"**कुल स्थिति**: **{pnl_emoji} NPR {net_pnl:,.2f}**\n\n"
+                + ("💡 *राम्रो रणनीति! SL tight राख्नुहोस् र Target सम्म ढुक्क भएर hold गर्नुहोस्।*" if net_pnl >= 0
+                   else "💡 *धैर्य राख्नुहोस्। बजारमा Capital बचाउनु सबैभन्दा ठूलो सफलता हो। नयाँ setup नआएसम्म पर्खिनुहोस्।*")
+            )
+            speech_text = (
+                f"तपाईंको कुल {'नाफा' if net_pnl >= 0 else 'घाटा'} {abs(net_pnl):,.0f} रूपैयाँ छ। "
+                f"{'राम्रो अनुशासन, आफ्ना लेभलहरू सुरक्षित राख्नुहोस्।' if net_pnl >= 0 else 'धैर्य राख्नुहोस् र अर्को राम्रो सेटअपको प्रतीक्षा गर्नुहोस्।'}"
+            )
+
     # ── ROUTE A: TRADE EXECUTION CONFIRMATION ──────────────────────────────────
-    if intent == "TRADE_EXECUTION":
+    elif intent == "TRADE_EXECUTION":
         if candles:
             latest_c = candles[-1].close
             sl_p = round(latest_c * 0.96, 2)
