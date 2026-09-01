@@ -1,9 +1,9 @@
 """
 SHACHINA MARKET STRUCTURE & LIQUIDITY ANALYSIS ENGINE
 Deterministic detection of market structure (HH, HL, LH, LL),
-Institutional Liquidity (BSL, SSL, EQH, EQL, Sweeps, FVG, BOS, CHoCH),
-Support/Resistance, Supply/Demand zones, Fibonacci retracements,
-and multi-indicator confluence.
+Institutional Liquidity (BSL, SSL, EQH, EQL, PDH, PDL, Sweeps, FVG, BOS, CHoCH, MSS),
+Order Blocks (OB), Premium/Discount dealing ranges, Support/Resistance, Supply/Demand,
+Fibonacci retracements, and multi-indicator confluence.
 """
 
 from typing import List, Dict, Any, Optional, Tuple
@@ -22,13 +22,13 @@ class SupportResistanceLevel(BaseModel):
 class ZoneLevel(BaseModel):
     top_price: float
     bottom_price: float
-    zone_type: str  # 'SUPPLY' | 'DEMAND' | 'BREAKOUT' | 'LIQUIDITY' | 'FVG' | 'ORDER_BLOCK'
+    zone_type: str  # 'SUPPLY' | 'DEMAND' | 'BREAKOUT' | 'LIQUIDITY' | 'FVG' | 'ORDER_BLOCK' | 'BREAKER'
     label: str
 
 
 class LiquidityPoint(BaseModel):
     price: float
-    type: str  # 'BSL' (Buy-side), 'SSL' (Sell-side), 'EQH' (Equal Highs), 'EQL' (Equal Lows), 'SWEEP'
+    type: str  # 'BSL' | 'SSL' | 'EQH' | 'EQL' | 'PDH' | 'PDL' | 'SWEEP'
     label: str
     candle_index: int
     swept: bool = False
@@ -38,7 +38,11 @@ class MarketStructureReport(BaseModel):
     trend: str                # 'BULLISH' | 'BEARISH' | 'CONSOLIDATION'
     regime: str               # 'STRONG_TREND', 'RANGING', 'BREAKOUT', 'BREAKDOWN'
     structure_type: str       # 'HIGHER_HIGHS_HIGHER_LOWS', 'LOWER_HIGHS_LOWER_LOWS', 'COMPRESSION'
-    bos_event: Optional[str] = None    # 'BOS_BULLISH', 'BOS_BEARISH', 'CHOCH_BULLISH', 'CHOCH_BEARISH'
+    bos_event: Optional[str] = None    # 'BOS_BULLISH', 'BOS_BEARISH', 'CHOCH_BULLISH', 'CHOCH_BEARISH', 'MSS_BULLISH', 'MSS_BEARISH'
+    dealing_range_zone: str   # 'PREMIUM', 'DISCOUNT', 'EQUILIBRIUM'
+    equilibrium_price: float
+    previous_day_high: Optional[float] = None
+    previous_day_low: Optional[float] = None
     swing_highs: List[Tuple[int, float]]
     swing_lows: List[Tuple[int, float]]
     liquidity_pools: List[LiquidityPoint]
@@ -60,7 +64,7 @@ class MarketStructureReport(BaseModel):
 class MarketStructureAnalyzer:
     """
     Computes rigorous deterministic market structure, institutional liquidity pools,
-    and technical indicators.
+    order blocks, and technical indicators.
     """
 
     @staticmethod
@@ -109,6 +113,10 @@ class MarketStructureAnalyzer:
                 trend="CONSOLIDATION",
                 regime="RANGING",
                 structure_type="COMPRESSION",
+                dealing_range_zone="EQUILIBRIUM",
+                equilibrium_price=latest_c,
+                previous_day_high=latest_c * 1.01,
+                previous_day_low=latest_c * 0.99,
                 swing_highs=[],
                 swing_lows=[],
                 liquidity_pools=[],
@@ -132,13 +140,18 @@ class MarketStructureAnalyzer:
         lows = [c.low for c in candles]
         volumes = [c.volume for c in candles if c.volume > 0]
         latest_price = closes[-1]
+        n = len(candles)
+
+        # Previous Day High / Low (PDH / PDL) from candle -2
+        pdh = highs[-2] if n >= 2 else highs[-1]
+        pdl = lows[-2] if n >= 2 else lows[-1]
 
         # ── 1. Swing Highs & Lows (Fractal peaks) ──────────────────────────────
         swing_highs: List[Tuple[int, float]] = []
         swing_lows: List[Tuple[int, float]] = []
 
         window = 2
-        for i in range(window, len(candles) - window):
+        for i in range(window, n - window):
             curr_h = highs[i]
             curr_l = lows[i]
             if all(curr_h >= highs[i - k] and curr_h >= highs[i + k] for k in range(1, window + 1)):
@@ -146,7 +159,7 @@ class MarketStructureAnalyzer:
             if all(curr_l <= lows[i - k] and curr_l <= lows[i + k] for k in range(1, window + 1)):
                 swing_lows.append((i, curr_l))
 
-        # ── 2. Market Structure & BOS / CHoCH ──────────────────────────────────
+        # ── 2. Market Structure & BOS / CHoCH / MSS ────────────────────────────
         trend = "CONSOLIDATION"
         structure_type = "COMPRESSION"
         bos_event = None
@@ -176,9 +189,42 @@ class MarketStructureAnalyzer:
             slope = closes[-1] - closes[0]
             trend = "BULLISH" if slope > 0 else "BEARISH" if slope < 0 else "CONSOLIDATION"
 
-        # ── 3. Liquidity Pools (BSL, SSL, Equal Highs/Lows, Sweeps) ────────────
+        # Check for Market Structure Shift (MSS) with displacement
+        if len(swing_lows) >= 1 and latest_price < swing_lows[-1][1] and trend == "BULLISH":
+            bos_event = "MSS_BEARISH"
+        elif len(swing_highs) >= 1 and latest_price > swing_highs[-1][1] and trend == "BEARISH":
+            bos_event = "MSS_BULLISH"
+
+        # ── 3. Dealing Range (Premium vs Discount) ─────────────────────────────
+        range_high = max(highs[-30:]) if n >= 30 else max(highs)
+        range_low = min(lows[-30:]) if n >= 30 else min(lows)
+        eq_price = round((range_high + range_low) / 2.0, 2)
+
+        if latest_price > eq_price * 1.01:
+            dealing_range_zone = "PREMIUM"
+        elif latest_price < eq_price * 0.99:
+            dealing_range_zone = "DISCOUNT"
+        else:
+            dealing_range_zone = "EQUILIBRIUM"
+
+        # ── 4. Liquidity Pools (BSL, SSL, Equal Highs/Lows, PDH, PDL, Sweeps) ──
         liquidity_pools: List[LiquidityPoint] = []
-        n = len(candles)
+
+        # Previous Day High / Low
+        liquidity_pools.append(LiquidityPoint(
+            price=pdh,
+            type="PDH",
+            label=f"PDH (Previous Day High: NPR {pdh:.1f})",
+            candle_index=n - 2,
+            swept=latest_price > pdh
+        ))
+        liquidity_pools.append(LiquidityPoint(
+            price=pdl,
+            type="PDL",
+            label=f"PDL (Previous Day Low: NPR {pdl:.1f})",
+            candle_index=n - 2,
+            swept=latest_price < pdl
+        ))
 
         # Equal Highs (EQH) within 0.3%
         for i in range(len(swing_highs) - 1):
@@ -226,11 +272,13 @@ class MarketStructureAnalyzer:
                 swept=latest_price < last_sl[1]
             ))
 
-        # ── 4. Fair Value Gaps (FVG) / Imbalances ─────────────────────────────
+        # ── 5. Fair Value Gaps (FVG) & Order Blocks (OB) ───────────────────────
         zones: List[ZoneLevel] = []
+
+        # Fair Value Gaps
         for i in range(2, n):
             c0, c1, c2 = candles[i - 2], candles[i - 1], candles[i]
-            # Bullish FVG: candle 0 High < candle 2 Low (gap between bar 0 and bar 2)
+            # Bullish FVG: candle 0 High < candle 2 Low
             if c2.low > c0.high and c1.is_bullish:
                 zones.append(ZoneLevel(
                     top_price=round(c2.low, 2),
@@ -247,7 +295,27 @@ class MarketStructureAnalyzer:
                     label=f"Bearish FVG (NPR {c2.high:.1f} - {c0.low:.1f})"
                 ))
 
-        # ── 5. Support & Resistance Clusters ───────────────────────────────────
+        # Institutional Order Blocks (OB)
+        # Bullish OB: last down-candle before strong bullish displacement
+        for i in range(1, n - 2):
+            c = candles[i]
+            next1, next2 = candles[i + 1], candles[i + 2]
+            if c.is_bearish and next1.is_bullish and next2.is_bullish and (next2.close - c.low) > (c.high - c.low) * 2.0:
+                zones.append(ZoneLevel(
+                    top_price=round(c.high, 2),
+                    bottom_price=round(c.low, 2),
+                    zone_type="ORDER_BLOCK",
+                    label=f"Bullish Order Block (NPR {c.low:.1f} - {c.high:.1f})"
+                ))
+            elif c.is_bullish and next1.is_bearish and next2.is_bearish and (c.high - next2.close) > (c.high - c.low) * 2.0:
+                zones.append(ZoneLevel(
+                    top_price=round(c.high, 2),
+                    bottom_price=round(c.low, 2),
+                    zone_type="ORDER_BLOCK",
+                    label=f"Bearish Order Block (NPR {c.low:.1f} - {c.high:.1f})"
+                ))
+
+        # ── 6. Support & Resistance Clusters ───────────────────────────────────
         all_levels = [sh[1] for sh in swing_highs] + [sl[1] for sl in swing_lows]
         support_levels: List[SupportResistanceLevel] = []
         resistance_levels: List[SupportResistanceLevel] = []
@@ -319,22 +387,23 @@ class MarketStructureAnalyzer:
             ),
         ])
 
-        # ── 6. Fibonacci Retracement ───────────────────────────────────────────
-        major_high = max(highs[-40:]) if len(highs) >= 40 else max(highs)
-        major_low = min(lows[-40:]) if len(lows) >= 40 else min(lows)
+        # ── 7. Fibonacci Retracement ───────────────────────────────────────────
+        major_high = max(highs[-40:]) if n >= 40 else max(highs)
+        major_low = min(lows[-40:]) if n >= 40 else min(lows)
         fib_range = major_high - major_low
 
         fibonacci_levels = [
             {"ratio": 0.0, "price": round(major_high, 2), "label": "0.0% (Swing High)"},
             {"ratio": 0.236, "price": round(major_high - 0.236 * fib_range, 2), "label": "23.6% Fib"},
             {"ratio": 0.382, "price": round(major_high - 0.382 * fib_range, 2), "label": "38.2% Fib"},
-            {"ratio": 0.500, "price": round(major_high - 0.500 * fib_range, 2), "label": "50.0% Golden Mid"},
+            {"ratio": 0.500, "price": round(major_high - 0.500 * fib_range, 2), "label": "50.0% Equilibrium"},
             {"ratio": 0.618, "price": round(major_high - 0.618 * fib_range, 2), "label": "61.8% Golden Pocket"},
+            {"ratio": 0.705, "price": round(major_high - 0.705 * fib_range, 2), "label": "70.5% OTE (Optimal Trade Entry)"},
             {"ratio": 0.786, "price": round(major_high - 0.786 * fib_range, 2), "label": "78.6% Fib"},
             {"ratio": 1.000, "price": round(major_low, 2), "label": "100.0% (Swing Low)"},
         ]
 
-        # ── 7. Moving Averages & Momentum ──────────────────────────────────────
+        # ── 8. Moving Averages & Momentum ──────────────────────────────────────
         ema9_vals = cls._ema(closes, 9)
         ema21_vals = cls._ema(closes, 21)
         ema50_vals = cls._ema(closes, 50)
@@ -381,12 +450,16 @@ class MarketStructureAnalyzer:
             regime=regime,
             structure_type=structure_type,
             bos_event=bos_event,
+            dealing_range_zone=dealing_range_zone,
+            equilibrium_price=eq_price,
+            previous_day_high=round(pdh, 2),
+            previous_day_low=round(pdl, 2),
             swing_highs=swing_highs[-6:],
             swing_lows=swing_lows[-6:],
             liquidity_pools=liquidity_pools[-6:],
             support_levels=support_levels[:3],
             resistance_levels=resistance_levels[:3],
-            supply_demand_zones=zones[:5],
+            supply_demand_zones=zones[:6],
             fibonacci_levels=fibonacci_levels,
             rsi_14=round(rsi_14, 1),
             rsi_signal=rsi_signal,
