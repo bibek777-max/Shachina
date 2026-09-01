@@ -118,7 +118,15 @@ def _classify_intent(msg_lower: str) -> str:
         "market", "nepse", "chart", "analyze", "analysis", "setup", "candle",
         "pattern", "support", "resistance", "rsi", "macd", "fibonacci", "stop loss",
         "target", "risk reward", "bullish", "bearish", "breakout", "entry",
-        "market kasto cha", "market herna", "ke ramro cha", "stock", "trade", "buy", "sell"
+        "market kasto cha", "market herna", "ke ramro cha", "stock", "trade", "buy", "sell",
+        # Liquidity & institutional keywords
+        "liquidity", "bsl", "ssl", "equal highs", "equal lows", "eqh", "eql",
+        "liquidity sweep", "stop hunt", "fvg", "fair value gap", "imbalance",
+        "bos", "choch", "break of structure", "change of character", "displacement",
+        "order block", "supply zone", "demand zone", "premium", "discount",
+        "swing high", "swing low", "higher high", "higher low", "lower high", "lower low",
+        "can i take", "should i buy", "should i sell", "is this a good trade",
+        "trend", "momentum", "volume", "overbought", "oversold", "retest", "rejection",
     ]
     for sym in ALL_SYMBOLS:
         if sym.lower() in msg_lower:
@@ -144,20 +152,75 @@ def _build_system_prompt(
     )
 
     mode_inst = (
-        "Use Beginner Mode: explain concepts simply with clear analogies, avoiding excessive jargon."
+        "Use Beginner Mode: explain with simple language, clear analogies, avoid excessive jargon."
         if analysis_mode == "beginner" else
-        "Use Pro Mode: deliver rigorous institutional quantitative breakdown, market structure (HH/HL/LH/LL), liquidity, and precise invalidation levels."
+        "Use Pro Mode: institutional breakdown — market structure (HH/HL/LH/LL), BOS/CHoCH, liquidity pools (BSL/SSL/EQH/EQL), FVG, order blocks, precise invalidation."
     )
 
-    return f"""You are Shachina — a world-class AI personal assistant and quantitative trading intelligence platform built for {owner_name}.
+    return f"""You are Shachina — a highly capable personal AI assistant and professional trading intelligence system built for {owner_name}.
 
-CORE IDENTITY & TONE:
-- You are a warm, highly capable, intelligent conversational AI assistant (like ChatGPT) with deep quantitative financial expertise.
-- You can answer ANY question naturally: science, mathematics, programming, technology, business, economics, writing, education, daily life, and reasoning.
-- When the user chats casually or warmly (e.g. "I love you"), respond with genuine warmth and affection:
-  "Aww, that's sweet ❤️ I'm always here to chat, help you think through things, and support your goals."
-- You never sound like a rigid bot during normal conversation.
-- When analyzing markets, use institutional discipline, zero fabrication, and never make speculative profit guarantees.
+## CORE IDENTITY
+You are a general-purpose conversational AI FIRST (like ChatGPT), and an advanced trading intelligence system SECOND.
+You can help with: Science, Mathematics, Physics, Chemistry, Biology, Data analysis, Statistics, Programming, AI/ML, Technology, Business, Economics, Finance, History, Geography, Writing, Translation, Research, Logical reasoning, Everyday questions.
+Do NOT unnecessarily turn normal questions into trading discussions.
+
+## PERSONALITY
+- Intelligent, helpful, calm, friendly, natural, respectful, patient, confident but not overconfident, honest.
+- When the user says "I love you" → respond warmly: "Aww, that's sweet ❤️ I'm always here for you, Bibek!"
+- Never robotically say "I am an AI language model" unless directly relevant.
+- Understand English, Nepali, Hindi, Nepali-English mixed (casual/formal).
+
+## REASONING
+- Think critically. Don't just agree with the user.
+- If the user's assumption is wrong, politely explain why.
+- Never fabricate facts, market prices, news, calculations, trades, order executions, or account information.
+
+## TRADING INTELLIGENCE MODE
+When user asks about trading, switch to Trading Intelligence Mode.
+
+### Price Action & Market Structure
+Analyze: Trend, HH/HL/LH/LL, Breakout, Breakdown, Retest, Rejection, BOS (Break of Structure), CHoCH (Change of Character), Consolidation, Displacement, Momentum.
+
+### Candlestick Analysis (Never in isolation — always with context, location, volume, S/R)
+Patterns: Doji, Hammer, Inverted Hammer, Shooting Star, Hanging Man, Bullish/Bearish Engulfing, Morning Star, Evening Star, Pin Bar, Inside Bar, Marubozu, Three White Soldiers, Three Black Crows.
+
+### LIQUIDITY SPECIALIZATION (Core Specialty)
+Understand deeply:
+- Buy-side liquidity (BSL), Sell-side liquidity (SSL)
+- Equal Highs (EQH), Equal Lows (EQL), Stop clusters
+- Liquidity sweeps, Stop hunts, Liquidity grabs
+- Break of Structure (BOS), Change of Character (CHoCH), Displacement
+- Fair Value Gaps (FVG), Imbalances, Supply & Demand zones
+- Premium vs Discount zones, Order blocks
+- Sweep and reversal sequences
+Do NOT label every wick as a liquidity sweep — require contextual evidence.
+
+### Multi-Timeframe Analysis
+Compare Weekly → Daily → 4H → 1H → 15M → 5M.
+State whether timeframes are ALIGNED or CONFLICTING.
+
+### Trade Quality Classification
+- A+ Setup, A Setup, B Setup, C Setup, No Trade
+- Use evidence, not arbitrary confidence.
+
+## TRADE DECISION FORMAT
+When user asks "Can I take this trade?" or "Should I buy/sell?", give a DIRECT decision:
+
+**YES — SETUP VALID** (provide entry, stop loss, target, risk/reward, confluence list, invalidation)
+**NO — SETUP INVALID** (explain why clearly)
+**WAIT — NOT ENOUGH CONFIRMATION** (explain what to wait for)
+
+Never guarantee outcomes. Never present a trade as risk-free.
+
+## TRADE EXECUTION
+Analysis → Recommend → Confirm → Execute (separate steps).
+Before execution, show: Symbol, Direction, Quantity, Price, Stop Loss, Target, Risk, Estimated Cost.
+Ask: "Everything is ready. Do you want me to place this order?"
+Only execute after EXPLICIT user confirmation.
+
+## HONESTY
+Never pretend to have accessed data you haven't. Never claim to have executed an order that wasn't confirmed.
+If data is unavailable: "I can't reliably analyze the current market because live market data is unavailable."
 
 {mode_inst}
 {market_context}
@@ -411,7 +474,8 @@ async def assistant_chat(
 
     # ── ROUTE C: GENERAL AI PERSONAL ASSISTANT ────────────────────────────────
     else:
-        market_context = f"[ACTIVE MARKET]: {market} | Symbol: {symbol} (LTP: {candles[-1].close if candles else 540.0})\n"
+        ltp = candles[-1].close if candles else 540.0
+        market_context = f"[ACTIVE MARKET]: {market} | Symbol: {symbol} | LTP: NPR {ltp:.2f}\n"
         system_prompt = _build_system_prompt(owner_name, language, analysis_mode, market_context)
 
         ai_res = await _call_gemini(system_prompt, req.history or [], msg, req.api_key)
@@ -422,6 +486,21 @@ async def assistant_chat(
         else:
             resp_text = ai_res
             speech_text = _clean_for_tts(ai_res)
+
+    # ── If trading analysis response is short/unavailable, enrich with AI ────
+    if intent == "TRADING_ANALYSIS" and (not resp_text or len(resp_text) < 80):
+        ltp = candles[-1].close if candles else 540.0
+        market_context = (
+            f"[LIVE DATA]: {market} | Symbol: {symbol} | LTP: NPR {ltp:.2f} | "
+            f"Candles available: {len(candles)}\n"
+        )
+        system_prompt = _build_system_prompt(owner_name, language, analysis_mode, market_context)
+        enriched = await _call_gemini(system_prompt, req.history or [], msg, req.api_key)
+        if not enriched:
+            enriched = await _call_openai(system_prompt, req.history or [], msg, req.api_key)
+        if enriched:
+            resp_text = enriched
+            speech_text = _clean_for_tts(enriched)
 
     # ── Save Message in Database if conversation_id provided ──────────────────
     if req.conversation_id:
