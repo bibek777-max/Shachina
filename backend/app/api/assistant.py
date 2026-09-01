@@ -398,41 +398,105 @@ def _general_ai_offline_response(msg: str, owner_name: str, language: str) -> tu
         )
         return resp, "Buy-side liquidity rests above swing highs, and Sell-side liquidity rests below swing lows."
 
-    # Loss in NEPSE / Market Drop
-    if any(k in ml for k in ["loss vako", "loss bhayo", "loss vayo", "aaja loss", "loss recovery", "loss bho"]):
+    # Python / Coding
+    if any(k in ml for k in ["python", "code", "coding", "script", "function", "javascript", "typescript", "html", "css", "sql", "algorithm"]):
         resp = (
-            f"📉 **NEPSE बजारमा घाटा (Loss) को विश्लेषण र समाधान, {owner_name}:**\n\n"
-            f"बजार घट्दा वा घाटा हुँदा निराश नहुनुहोस् — यो ट्रेडिङको एउटा स्वाभाविक हिस्सा हो। महत्वपूर्ण कुरा **पुँजी संरक्षण (Capital Protection)** र **अनुशासन** हो।\n\n"
-            f"**किन घाटा भयो? (Market Reasons):**\n"
-            f"1. **Profit Booking & Selling Pressure**: अघिल्ला दिनहरूको वृद्धिपछि लगानीकर्ताहरूले नाफा सुरक्षित गर्दा आपूर्ति बढ्यो।\n"
-            f"2. **Liquidity Sweep (Stop Hunt)**: ठूला खेलाडीहरूले Key Support भन्दा तल रहेका Stop Loss अर्डरहरू ट्रिगर गरे।\n"
-            f"3. **Volume Contraction**: खरिदकर्ताहरू पर्ख र हेर (Wait & Watch) को रणनीतिमा हुँदा माग कमजोर रह्यो।\n\n"
-            f"**अब के गर्ने? (Action Plan):**\n"
-            f"• 🚫 **Revenge Trading नगर्नुहोस्**: तुरुन्तै रिकभर गर्ने हतारमा अनावश्यक ट्रेड नलिनुहोस्।\n"
-            f"• 🛡️ **Stop Loss को कडा पालना**: आफ्नो अधिकतम जोखिम (1% rule) भन्दा बढी घाटा हुन नदिनुहोस्।\n"
-            f"• ⏳ **Confirmation को पर्खाइ**: Support लेभलमा बुलिश Reversal क्यान्डल (Hammer/Engulfing) र BOS नआएसम्म नयाँ इन्ट्री नलिनुहोस्।"
+            f"💻 **Shachina Code Engine — Python & Modern Engineering**\n\n"
+            f"Here is a robust, modular implementation demonstrating clean architecture and async execution:\n\n"
+            f"```python\n"
+            f"import asyncio\n"
+            f"import httpx\n"
+            f"from typing import Dict, Any, Optional\n\n"
+            f"class MarketDataClient:\n"
+            f"    def __init__(self, base_url: str = 'https://api.market.com'):\n"
+            f"        self.base_url = base_url\n"
+            f"        self.client = httpx.AsyncClient(timeout=10.0)\n\n"
+            f"    async def fetch_ticker(self, symbol: str) -> Optional[Dict[str, Any]]:\n"
+            f"        \"\"\"Fetches verified ticker data asynchronously with error handling.\"\"\"\n"
+            f"        try:\n"
+            f"            response = await self.client.get(f'{{self.base_url}}/ticker/{{symbol}}')\n"
+            f"            response.raise_for_status()\n"
+            f"            return response.json()\n"
+            f"        except Exception as err:\n"
+            f"            print(f'[Error fetching {{symbol}}]: {{err}}')\n"
+            f"            return None\n\n"
+            f"async def main():\n"
+            f"    client = MarketDataClient()\n"
+            f"    data = await client.fetch_ticker('NABIL')\n"
+            f"    print('Market Data:', data)\n\n"
+            f"if __name__ == '__main__':\n"
+            f"    asyncio.run(main())\n"
+            f"```\n\n"
+            f"**Key Engineering Best Practices Applied:**\n"
+            f"• **Async I/O (`httpx.AsyncClient`)**: Prevents event loop blocking during network requests.\n"
+            f"• **Type Annotations**: Ensures type safety with `Dict`, `Any`, and `Optional`.\n"
+            f"• **Clean Error Handling**: Catches network interruptions gracefully."
         )
-        return resp, "Market pullbacks happen naturally. Focus on capital preservation, do not revenge trade, and wait for confirmation."
+        return resp, "Here is a clean asynchronous Python implementation with proper error handling."
 
-    # Global Markets / Crypto / US Stocks
-    if any(k in ml for k in ["global market", "crypto", "bitcoin", "btc", "us stock", "global"]):
+    # Quantum Computing / Physics
+    if any(k in ml for k in ["quantum", "physics", "relativity", "einstein", "gravity"]):
         resp = (
-            f"🌐 **Global Markets & Crypto Macro Outlook:**\n\n"
-            f"• **US Equities (S&P 500 / Nasdaq)**: Global risk sentiment, Federal Reserve interest rate policy, and tech sector earnings provide the macro benchmark.\n"
-            f"• **Crypto (Bitcoin & Majors)**: BTC acts as high-beta global liquidity barometer. When global liquidity expands, institutional risk appetite increases.\n"
-            f"• **Correlation to NEPSE**: While NEPSE is primarily domestic (bank liquidity, NRB interest rates, fiscal policy), global liquidity trends influence foreign capital flows, remittance sentiment, and institutional risk tolerance."
+            "🌌 **Quantum Mechanics & Modern Physics Overview**\n\n"
+            "Physics explains the fundamental laws governing matter, energy, space, and time:\n\n"
+            "1. **Quantum Superposition**: A quantum particle (like an electron or qubit) exists in a linear combination of all possible states $\\psi = \\alpha|0\\rangle + \\beta|1\\rangle$ until observed.\n"
+            "2. **Quantum Entanglement**: Particles become interconnected such that the quantum state of one instantaneously dictates the state of another, regardless of distance.\n"
+            "3. **General Relativity ($G_{\\mu\\nu} = \\frac{8\\pi G}{c^4} T_{\\mu\\nu}$)**: Gravity is the curvature of spacetime caused by mass and energy."
         )
-        return resp, "Global equities and crypto reflect macro liquidity sentiment, which indirectly influences emerging markets."
+        return resp, "Quantum mechanics and relativity describe the universe from atomic to cosmological scales."
 
-    # Market Overview / Aaja Nepse
-    if any(k in ml for k in ["aaja nepse", "market kasto", "market review", "nepse overview", "kina ghateko"]):
+    # Mathematics & Calculus
+    if any(k in ml for k in ["math", "mathematics", "calculus", "equation", "formula", "integral", "derivative"]):
         resp = (
-            f"📊 **NEPSE बजारको वर्तमान अवस्था:**\n\n"
-            f"• **Market Structure**: बजार अहिले Key Support र Resistance को बीचमा सन्तुलन (Range/Consolidation) खोज्दैछ।\n"
-            f"• **Liquidity Zone**: Swing Highs माथि BSL र Swing Lows तल SSL अर्डरहरू केन्द्रित छन्।\n"
-            f"• **सुझाव**: बजारले स्पष्ट दिशा (Breakout वा Retest Confirmation) नदेखाएसम्म Trade Force नगर्नुहोस्।"
+            "🧮 **Mathematical Reasoning & Analytical Framework**\n\n"
+            "**1. Quadratic Formula:**\n"
+            "For any equation $ax^2 + bx + c = 0$, the roots are:\n"
+            "$$x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}$$\n\n"
+            "**2. Compound Interest & Capital Growth:**\n"
+            "$$A = P \\left(1 + \\frac{r}{n}\\right)^{nt}$$\n"
+            "Where $P$ is principal, $r$ is annual rate, $n$ is compounding frequency, and $t$ is time in years."
         )
-        return resp, "NEPSE is currently consolidating near key liquidity zones. Wait for confirmed market structure."
+        return resp, "Mathematics provides exact modeling for probability, growth, and quantitative systems."
+
+    # Writing & Email / Business
+    if any(k in ml for k in ["email", "letter", "essay", "write a", "draft", "proposal"]):
+        resp = (
+            "✍️ **Professional Business Communication Draft**\n\n"
+            "**Subject:** Proposal & Collaborative Framework — Project Alignment\n\n"
+            "Dear Team / Client,\n\n"
+            "I hope this message finds you well.\n\n"
+            "I am writing to share our project outline and key milestones for the upcoming phase. Our primary objectives include:\n"
+            "1. **System Optimization & Reliability**: Ensuring sub-second latency and uninterrupted workflows.\n"
+            "2. **Strategic Execution**: Delivering value through verified milestones and data-driven reviews.\n\n"
+            "Please review the attached notes and let me know if you would like to schedule a brief alignment call.\n\n"
+            "Best regards,\n"
+            f"{owner_name}"
+        )
+        return resp, "Here is a professional and clear communication draft ready for use."
+
+    # Translation
+    if any(k in ml for k in ["translate", "translation", "nepali to english", "english to nepali"]):
+        resp = (
+            "🌐 **Shachina Translation Engine (Nepali ↔ English ↔ Hindi)**\n\n"
+            "• **English**: 'Discipline and risk management are the foundation of consistent success.'\n"
+            "• **नेपाली**: 'अनुशासन र जोखिम व्यवस्थापन नै निरन्तर सफलताको मुख्य आधार हुन्।'\n"
+            "• **हिंदी**: 'अनुशासन और जोखिम प्रबंधन ही निरंतर सफलता की मुख्य नींव हैं।'\n\n"
+            "Send me any text, document, or sentence, and I will translate it with accurate context and natural phrasing!"
+        )
+        return resp, "Send me any sentence or document, and I will translate it accurately."
+
+    # Default Universal Conversational Intelligence
+    resp = (
+        f"✨ **Shachina Intelligence Response for {owner_name}**\n\n"
+        f"Regarding your query **\"{msg}\"**:\n\n"
+        f"1. **Core Understanding**: Addressing this effectively requires analyzing the fundamental principles and evaluating practical solutions.\n"
+        f"2. **Structured Breakdown**:\n"
+        f"   • **Clarity & Logic**: Break the problem down into manageable components.\n"
+        f"   • **Iterative Execution**: Test assumptions with verifiable data.\n"
+        f"   • **Optimization**: Focus on sustainable, scalable outcomes.\n\n"
+        f"Feel free to ask me to write code, solve equations, draft documents, translate languages, or evaluate financial setups!"
+    )
+    return resp, f"Here is the breakdown for {msg}. Let me know if you would like me to elaborate further."
 
 
 # ─── Main Assistant Chat Endpoint ─────────────────────────────────────────────

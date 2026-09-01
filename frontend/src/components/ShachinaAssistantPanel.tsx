@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   X, Mic, MicOff, Volume2, VolumeX, Send, Loader2, Sparkles, Plus,
   MessageSquare, Search, Trash2, CheckCircle, Activity, Copy, Check,
-  Download, Code, HelpCircle, TrendingUp, Cpu
+  Download, Code, RotateCw, Edit3
 } from 'lucide-react';
 import { voiceEngine } from '../services/voiceEngine';
 import { api } from '../services/api';
@@ -29,10 +29,10 @@ const CodeBlock: React.FC<{ code: string; language?: string }> = ({ code, langua
   };
 
   return (
-    <div className="my-2 rounded-xl overflow-hidden border border-[#22304e] bg-[#050812] font-mono text-[11px]">
+    <div className="my-2 rounded-xl overflow-hidden border border-[#22304e] bg-[#050812] font-mono text-[11px] shadow-lg">
       <div className="flex items-center justify-between px-3 py-1.5 bg-[#0b1222] border-b border-[#1c2944] text-[10px] text-slate-400">
-        <span className="flex items-center gap-1 text-cyan-400 font-bold uppercase tracking-wider">
-          <Code className="w-3 h-3" /> {language || 'code'}
+        <span className="flex items-center gap-1.5 text-cyan-400 font-bold uppercase tracking-wider">
+          <Code className="w-3.5 h-3.5" /> {language || 'code'}
         </span>
         <button
           onClick={handleCopy}
@@ -51,7 +51,6 @@ const CodeBlock: React.FC<{ code: string; language?: string }> = ({ code, langua
 
 // ─── Markdown Content Parser (Code blocks, tables, bold, lists) ──────────────
 const FormattedMessage: React.FC<{ content: string }> = ({ content }) => {
-  // Split by code blocks ```lang ... ```
   const parts: React.ReactNode[] = [];
   const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g;
   let lastIndex = 0;
@@ -74,7 +73,6 @@ const FormattedMessage: React.FC<{ content: string }> = ({ content }) => {
   return <div className="space-y-1">{parts}</div>;
 };
 
-// Render tables and standard formatted text
 function renderTextAndTables(text: string, keyPrefix: string): React.ReactNode {
   const lines = text.split('\n');
   const elements: React.ReactNode[] = [];
@@ -135,9 +133,7 @@ function renderTextAndTables(text: string, keyPrefix: string): React.ReactNode {
   return <React.Fragment key={keyPrefix}>{elements}</React.Fragment>;
 }
 
-// Inline formatting for bold, inline code, bullets, headers
 function renderInlineFormatting(line: string): React.ReactNode {
-  // Headers
   if (line.startsWith('### ')) {
     return <h4 className="text-cyan-300 font-bold text-xs mt-2 mb-1">{line.slice(4)}</h4>;
   }
@@ -156,7 +152,6 @@ function renderInlineFormatting(line: string): React.ReactNode {
 }
 
 function renderBoldAndCode(text: string): React.ReactNode {
-  // Split by inline code `...` and bold **...**
   const chunks = text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g);
   return chunks.map((chunk, idx) => {
     if (chunk.startsWith('`') && chunk.endsWith('`') && chunk.length > 2) {
@@ -177,7 +172,7 @@ function renderBoldAndCode(text: string): React.ReactNode {
   });
 }
 
-// ─── Main Shachina Assistant Panel Component ─────────────────────────────────
+// ─── Main Assistant Panel Component ──────────────────────────────────────────
 export const ShachinaAssistantPanel: React.FC<ShachinaAssistantPanelProps> = ({
   selectedSymbol, selectedMarket = 'NEPSE', user, onClose, onAnnotationsReceived, onOrderPlaced, isEmbedded = false,
 }) => {
@@ -206,6 +201,7 @@ export const ShachinaAssistantPanel: React.FC<ShachinaAssistantPanelProps> = ({
   const [executingOrder, setExecutingOrder] = useState<boolean>(false);
   const [executionNotice, setExecutionNotice] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     voiceEngine.isMuted = !voiceEnabled;
@@ -336,6 +332,15 @@ export const ShachinaAssistantPanel: React.FC<ShachinaAssistantPanelProps> = ({
     } finally { setIsGenerating(false); }
   };
 
+  // Regenerate last response
+  const handleRegenerateLast = () => {
+    if (isGenerating) return;
+    const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+    if (lastUserMsg) {
+      handleSendMessage(lastUserMsg.content);
+    }
+  };
+
   const toggleListening = () => {
     if (isListening) { voiceEngine.stop(); setIsListening(false); return; }
     voiceEngine.stop(); setIsListening(true);
@@ -382,7 +387,7 @@ export const ShachinaAssistantPanel: React.FC<ShachinaAssistantPanelProps> = ({
               <MessageSquare className="w-4 h-4" />
             </button>
             <div className="flex items-center gap-1.5">
-              <span className="font-extrabold text-sm text-cyan-300 font-mono">SHACHINA AI</span>
+              <span className="font-extrabold text-sm text-cyan-300 font-mono tracking-tight">SHACHINA AI</span>
               <span className="text-[9px] bg-cyan-950 text-cyan-400 border border-cyan-800 px-1.5 rounded font-bold font-mono">{selectedSymbol}</span>
             </div>
           </div>
@@ -513,9 +518,9 @@ export const ShachinaAssistantPanel: React.FC<ShachinaAssistantPanelProps> = ({
           </div>
         )}
 
-        {messages.map((m) => (
+        {messages.map((m, idx) => (
           <div key={m.id} className={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
-            <div className={`max-w-[92%] rounded-2xl p-3 text-[11px] leading-relaxed ${m.role === 'user' ? 'rounded-br-none bg-cyan-500/15 border border-cyan-500/30 text-cyan-100' : 'rounded-bl-none bg-[#0d1424] border border-[#1e2a44] text-slate-200 shadow-md'}`}>
+            <div className={`max-w-[92%] rounded-2xl p-3 text-[11px] leading-relaxed ${m.role === 'user' ? 'rounded-br-none bg-cyan-500/15 border border-cyan-500/30 text-cyan-100 group' : 'rounded-bl-none bg-[#0d1424] border border-[#1e2a44] text-slate-200 shadow-md'}`}>
               {m.role === 'shachina' && (
                 <div className="flex items-center justify-between mb-2 border-b border-[#1c2842] pb-1">
                   <span className="text-[9px] font-black text-cyan-400 tracking-widest flex items-center gap-1">
@@ -533,12 +538,26 @@ export const ShachinaAssistantPanel: React.FC<ShachinaAssistantPanelProps> = ({
                 </div>
               )}
 
+              {/* User message edit shortcut */}
+              {m.role === 'user' && (
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <span className="text-[9px] text-cyan-500/70 uppercase font-bold">You</span>
+                  <button
+                    onClick={() => setInputText(m.content)}
+                    className="opacity-60 hover:opacity-100 text-cyan-400 p-0.5 rounded transition-all"
+                    title="Edit and resend"
+                  >
+                    <Edit3 className="w-2.5 h-2.5" />
+                  </button>
+                </div>
+              )}
+
               {/* Formatted Message Content */}
               <FormattedMessage content={m.content} />
 
-              {/* Per-message Speak button */}
+              {/* Per-message Speak button & Actions */}
               {m.role === 'shachina' && (
-                <div className="mt-2.5 pt-1.5 border-t border-[#18233a] flex items-center gap-2">
+                <div className="mt-2.5 pt-1.5 border-t border-[#18233a] flex items-center justify-between gap-2">
                   <button onClick={() => speakMessage(m)}
                     className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-[9px] font-bold transition-all ${
                       speakingMsgId === m.id ? 'bg-purple-500/20 border border-purple-400/50 text-purple-300 animate-pulse'
@@ -550,6 +569,19 @@ export const ShachinaAssistantPanel: React.FC<ShachinaAssistantPanelProps> = ({
                       <><Volume2 className="w-3 h-3" /><span>🔊 सुन्नुहोस्</span></>
                     )}
                   </button>
+
+                  {/* Regenerate if this is the last assistant message */}
+                  {idx === messages.length - 1 && (
+                    <button
+                      onClick={handleRegenerateLast}
+                      disabled={isGenerating}
+                      className="flex items-center gap-1 px-2 py-1 rounded-lg bg-[#141d2e] hover:bg-cyan-950 text-slate-400 hover:text-cyan-300 text-[9px] font-mono transition-colors"
+                      title="Regenerate response"
+                    >
+                      <RotateCw className={`w-2.5 h-2.5 ${isGenerating ? 'animate-spin' : ''}`} />
+                      <span>Regenerate</span>
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -599,20 +631,26 @@ export const ShachinaAssistantPanel: React.FC<ShachinaAssistantPanelProps> = ({
       <div className="p-2.5 bg-[#050810] border-t border-[#161f33]">
         {/* Quick shortcut chips */}
         <div className="flex gap-1.5 mb-2 overflow-x-auto pb-0.5 scrollbar-none">
-          {['कति profit?', 'P&L report', 'NABIL setup?', 'Market overview', 'Explain code'].map((q) => (
+          {['कति profit?', 'P&L report', 'NABIL setup?', 'Market overview', 'Write Python code'].map((q) => (
             <button key={q} onClick={() => handleSendMessage(q)} className="flex-shrink-0 text-[9px] px-2 py-1 rounded-lg bg-[#0d1424] border border-[#1e2a44] text-slate-400 hover:text-cyan-300 hover:border-cyan-500/40 transition-colors font-mono whitespace-nowrap">{q}</button>
           ))}
         </div>
         <div className="flex items-center gap-2 bg-[#0d1424] border border-[#1e2a44] rounded-xl px-3 py-2 focus-within:border-cyan-400 transition-colors">
-          <input
-            type="text"
+          <textarea
+            ref={textareaRef}
+            rows={1}
             placeholder={isListening ? '🎙️ सुनिरहेको छ...' : 'Ask coding, science, P&L, or trade setup...'}
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(); } }}
-            className="flex-1 bg-transparent text-xs text-white placeholder-slate-500 focus:outline-none font-mono"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSendMessage();
+              }
+            }}
+            className="flex-1 bg-transparent text-xs text-white placeholder-slate-500 focus:outline-none font-mono resize-none max-h-24 overflow-y-auto"
           />
-          <button onClick={() => setVoiceEnabled((v) => !v)} className={`p-1.5 rounded-lg transition-all ${voiceEnabled ? 'text-cyan-400 hover:bg-cyan-950' : 'text-slate-600 hover:bg-slate-800'}`} title={voiceEnabled ? 'Voice ON' : 'Voice OFF'}>
+          <button onClick={() => setVoiceEnabled((v) => !v)} className={`p-1.5 rounded-lg transition-all ${voiceEnabled ? 'text-cyan-400 hover:bg-cyan-950' : 'text-slate-600 hover:bg-slate-800'}`} title="Toggle Voice">
             {voiceEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
           </button>
           <button onClick={toggleListening} className={`p-1.5 rounded-lg transition-all ${isListening ? 'bg-rose-600 text-white animate-pulse' : 'hover:bg-slate-800 text-slate-400 hover:text-cyan-300'}`}>
