@@ -142,9 +142,175 @@ def _classify_intent(msg_lower: str) -> str:
     if any(k in msg_lower for k in trade_decision_keywords):
         return "EXPLICIT_TRADE_DECISION"
 
+    # Real-time / Global Time / Date query
+    time_keywords = [
+        "what time", "what's the time", "current time", "time now", "what is the time",
+        "kati bajyo", "kati baje", "bajyo", "time in", "what date", "today date", "today's date",
+        "current date", "what day is today", "what day today", "what is the date", "date today",
+        "aaja ko date", "aaja ko time", "aaja katti", "kitna baje", "kitna time", "time kya",
+        "world clock", "global time", "current timestamp"
+    ]
+    if any(k in msg_lower for k in time_keywords):
+        return "TIME_QUERY"
+
     # Everything else (market loss discussions, why is it dropping, general knowledge, math, coding)
     # is handled by the universal conversational AI
     return "GENERAL_CONVERSATION"
+
+
+# ─── Global Time & World Clock Engine ──────────────────────────────────────────
+GLOBAL_LOCATIONS: Dict[str, tuple[str, str, str]] = {
+    "nepal": ("Asia/Kathmandu", "Kathmandu, Nepal", "NPT (UTC+5:45)"),
+    "kathmandu": ("Asia/Kathmandu", "Kathmandu, Nepal", "NPT (UTC+5:45)"),
+    "pokhara": ("Asia/Kathmandu", "Pokhara, Nepal", "NPT (UTC+5:45)"),
+    "india": ("Asia/Kolkata", "New Delhi, India", "IST (UTC+5:30)"),
+    "delhi": ("Asia/Kolkata", "New Delhi, India", "IST (UTC+5:30)"),
+    "mumbai": ("Asia/Kolkata", "Mumbai, India", "IST (UTC+5:30)"),
+    "kolkata": ("Asia/Kolkata", "Kolkata, India", "IST (UTC+5:30)"),
+    "bangalore": ("Asia/Kolkata", "Bengaluru, India", "IST (UTC+5:30)"),
+    "new york": ("America/New_York", "New York, USA", "EDT (UTC-4) / EST (UTC-5)"),
+    "ny": ("America/New_York", "New York, USA", "EDT (UTC-4) / EST (UTC-5)"),
+    "nyc": ("America/New_York", "New York, USA", "EDT (UTC-4) / EST (UTC-5)"),
+    "los angeles": ("America/Los_Angeles", "Los Angeles, USA", "PDT (UTC-7) / PST (UTC-8)"),
+    "california": ("America/Los_Angeles", "California, USA", "PDT (UTC-7) / PST (UTC-8)"),
+    "san francisco": ("America/Los_Angeles", "San Francisco, USA", "PDT (UTC-7) / PST (UTC-8)"),
+    "chicago": ("America/Chicago", "Chicago, USA", "CDT (UTC-5) / CST (UTC-6)"),
+    "texas": ("America/Chicago", "Texas, USA", "CDT (UTC-5) / CST (UTC-6)"),
+    "houston": ("America/Chicago", "Houston, USA", "CDT (UTC-5) / CST (UTC-6)"),
+    "miami": ("America/New_York", "Miami, USA", "EDT (UTC-4) / EST (UTC-5)"),
+    "florida": ("America/New_York", "Florida, USA", "EDT (UTC-4) / EST (UTC-5)"),
+    "washington": ("America/New_York", "Washington D.C., USA", "EDT (UTC-4) / EST (UTC-5)"),
+    "usa": ("America/New_York", "New York, USA (Eastern)", "EDT/EST"),
+    "us": ("America/New_York", "New York, USA (Eastern)", "EDT/EST"),
+    "america": ("America/New_York", "New York, USA (Eastern)", "EDT/EST"),
+    "london": ("Europe/London", "London, UK", "BST (UTC+1) / GMT (UTC+0)"),
+    "uk": ("Europe/London", "United Kingdom", "BST (UTC+1) / GMT (UTC+0)"),
+    "britain": ("Europe/London", "United Kingdom", "BST (UTC+1) / GMT (UTC+0)"),
+    "england": ("Europe/London", "England, UK", "BST (UTC+1) / GMT (UTC+0)"),
+    "tokyo": ("Asia/Tokyo", "Tokyo, Japan", "JST (UTC+9:00)"),
+    "japan": ("Asia/Tokyo", "Tokyo, Japan", "JST (UTC+9:00)"),
+    "dubai": ("Asia/Dubai", "Dubai, UAE", "GST (UTC+4:00)"),
+    "uae": ("Asia/Dubai", "United Arab Emirates", "GST (UTC+4:00)"),
+    "abu dhabi": ("Asia/Dubai", "Abu Dhabi, UAE", "GST (UTC+4:00)"),
+    "sydney": ("Australia/Sydney", "Sydney, Australia", "AEST (UTC+10) / AEDT (UTC+11)"),
+    "melbourne": ("Australia/Melbourne", "Melbourne, Australia", "AEST (UTC+10) / AEDT (UTC+11)"),
+    "brisbane": ("Australia/Brisbane", "Brisbane, Australia", "AEST (UTC+10:00)"),
+    "australia": ("Australia/Sydney", "Sydney, Australia", "AEST/AEDT"),
+    "toronto": ("America/Toronto", "Toronto, Canada", "EDT (UTC-4) / EST (UTC-5)"),
+    "vancouver": ("America/Vancouver", "Vancouver, Canada", "PDT (UTC-7) / PST (UTC-8)"),
+    "canada": ("America/Toronto", "Toronto, Canada", "EDT/EST"),
+    "singapore": ("Asia/Singapore", "Singapore", "SGT (UTC+8:00)"),
+    "hong kong": ("Asia/Hong_Kong", "Hong Kong", "HKT (UTC+8:00)"),
+    "paris": ("Europe/Paris", "Paris, France", "CEST (UTC+2) / CET (UTC+1)"),
+    "france": ("Europe/Paris", "Paris, France", "CEST/CET"),
+    "berlin": ("Europe/Berlin", "Berlin, Germany", "CEST (UTC+2) / CET (UTC+1)"),
+    "germany": ("Europe/Berlin", "Berlin, Germany", "CEST/CET"),
+    "frankfurt": ("Europe/Berlin", "Frankfurt, Germany", "CEST/CET"),
+    "rome": ("Europe/Rome", "Rome, Italy", "CEST/CET"),
+    "italy": ("Europe/Rome", "Rome, Italy", "CEST/CET"),
+    "madrid": ("Europe/Madrid", "Madrid, Spain", "CEST/CET"),
+    "spain": ("Europe/Madrid", "Spain", "CEST/CET"),
+    "zurich": ("Europe/Zurich", "Zurich, Switzerland", "CEST/CET"),
+    "switzerland": ("Europe/Zurich", "Switzerland", "CEST/CET"),
+    "beijing": ("Asia/Shanghai", "Beijing, China", "CST (UTC+8:00)"),
+    "shanghai": ("Asia/Shanghai", "Shanghai, China", "CST (UTC+8:00)"),
+    "china": ("Asia/Shanghai", "Beijing, China", "CST (UTC+8:00)"),
+    "seoul": ("Asia/Seoul", "Seoul, South Korea", "KST (UTC+9:00)"),
+    "korea": ("Asia/Seoul", "Seoul, South Korea", "KST (UTC+9:00)"),
+    "bangkok": ("Asia/Bangkok", "Bangkok, Thailand", "ICT (UTC+7:00)"),
+    "thailand": ("Asia/Bangkok", "Bangkok, Thailand", "ICT (UTC+7:00)"),
+    "kuala lumpur": ("Asia/Kuala_Lumpur", "Kuala Lumpur, Malaysia", "MYT (UTC+8:00)"),
+    "malaysia": ("Asia/Kuala_Lumpur", "Malaysia", "MYT (UTC+8:00)"),
+    "jakarta": ("Asia/Jakarta", "Jakarta, Indonesia", "WIB (UTC+7:00)"),
+    "indonesia": ("Asia/Jakarta", "Indonesia", "WIB (UTC+7:00)"),
+    "doha": ("Asia/Qatar", "Doha, Qatar", "AST (UTC+3:00)"),
+    "qatar": ("Asia/Qatar", "Doha, Qatar", "AST (UTC+3:00)"),
+    "riyadh": ("Asia/Riyadh", "Riyadh, Saudi Arabia", "AST (UTC+3:00)"),
+    "saudi arabia": ("Asia/Riyadh", "Saudi Arabia", "AST (UTC+3:00)"),
+    "saudi": ("Asia/Riyadh", "Saudi Arabia", "AST (UTC+3:00)"),
+    "kuwait": ("Asia/Kuwait", "Kuwait City, Kuwait", "AST (UTC+3:00)"),
+    "moscow": ("Europe/Moscow", "Moscow, Russia", "MSK (UTC+3:00)"),
+    "russia": ("Europe/Moscow", "Moscow, Russia", "MSK (UTC+3:00)"),
+    "auckland": ("Pacific/Auckland", "Auckland, New Zealand", "NZST (UTC+12) / NZDT (UTC+13)"),
+    "new zealand": ("Pacific/Auckland", "New Zealand", "NZST/NZDT"),
+    "sao paulo": ("America/Sao_Paulo", "São Paulo, Brazil", "BRT (UTC-3:00)"),
+    "brazil": ("America/Sao_Paulo", "Brazil", "BRT (UTC-3:00)"),
+    "johannesburg": ("Africa/Johannesburg", "Johannesburg, South Africa", "SAST (UTC+2:00)"),
+    "south africa": ("Africa/Johannesburg", "South Africa", "SAST (UTC+2:00)"),
+    "utc": ("UTC", "Coordinated Universal Time (UTC)", "UTC"),
+    "gmt": ("UTC", "Greenwich Mean Time (GMT)", "GMT"),
+}
+
+
+def _resolve_global_time(msg: str) -> Optional[tuple[str, str]]:
+    """
+    Computes accurate real-time global timestamps and world clock data.
+    """
+    import zoneinfo
+    ml = msg.lower().strip()
+    is_time_query = any(k in ml for k in [
+        "time", "time now", "current time", "what time", "kati bajyo", "bajyo",
+        "clock", "date", "today date", "what day", "current date", "aaja ko date",
+        "aaja ko time", "kitna baje", "kitna time", "time kya", "world clock", "global time"
+    ])
+    if not is_time_query:
+        return None
+
+    # Match specific location
+    matched_loc = None
+    for loc_key in sorted(GLOBAL_LOCATIONS.keys(), key=len, reverse=True):
+        if re.search(r'\b' + re.escape(loc_key) + r'\b', ml):
+            matched_loc = GLOBAL_LOCATIONS[loc_key]
+            break
+
+    if matched_loc:
+        tz_name, loc_display, tz_code = matched_loc
+        now = datetime.now(zoneinfo.ZoneInfo(tz_name))
+        time_str = now.strftime("%I:%M:%S %p")
+        date_str = now.strftime("%A, %B %d, %Y")
+        text = (
+            f"🕒 **Current Time in {loc_display}:**\n\n"
+            f"• **Time**: `{time_str}`\n"
+            f"• **Date**: {date_str}\n"
+            f"• **Timezone**: {tz_code} ({tz_name})"
+        )
+        speech = f"The current time in {loc_display} is {now.strftime('%I:%M %p')} on {date_str}."
+        return text, speech
+
+    # Default: Global World Clock snapshot with Nepal as primary local anchor
+    now_npt = datetime.now(zoneinfo.ZoneInfo("Asia/Kathmandu"))
+    now_utc = datetime.now(zoneinfo.ZoneInfo("UTC"))
+    now_ist = datetime.now(zoneinfo.ZoneInfo("Asia/Kolkata"))
+    now_dub = datetime.now(zoneinfo.ZoneInfo("Asia/Dubai"))
+    now_lon = datetime.now(zoneinfo.ZoneInfo("Europe/London"))
+    now_ny = datetime.now(zoneinfo.ZoneInfo("America/New_York"))
+    now_la = datetime.now(zoneinfo.ZoneInfo("America/Los_Angeles"))
+    now_tok = datetime.now(zoneinfo.ZoneInfo("Asia/Tokyo"))
+    now_syd = datetime.now(zoneinfo.ZoneInfo("Australia/Sydney"))
+
+    time_npt = now_npt.strftime("%I:%M:%S %p")
+    date_npt = now_npt.strftime("%A, %B %d, %Y")
+
+    text = (
+        f"🕒 **Current Local Time (Nepal / Kathmandu):**\n"
+        f"### **{time_npt}**\n"
+        f"📅 **{date_npt}** *(NPT, UTC+5:45)*\n\n"
+        f"---\n\n"
+        f"🌐 **Global World Clock:**\n\n"
+        f"| Region | City | Current Time | Timezone |\n"
+        f"| :--- | :--- | :--- | :--- |\n"
+        f"| 🇳🇵 **Nepal** | Kathmandu | **{now_npt.strftime('%I:%M %p')}** | NPT (UTC+5:45) |\n"
+        f"| 🇮🇳 **India** | New Delhi | **{now_ist.strftime('%I:%M %p')}** | IST (UTC+5:30) |\n"
+        f"| 🇦🇪 **UAE** | Dubai | **{now_dub.strftime('%I:%M %p')}** | GST (UTC+4:00) |\n"
+        f"| 🇬🇧 **UK** | London | **{now_lon.strftime('%I:%M %p')}** | BST/GMT (UTC+1/0) |\n"
+        f"| 🇺🇸 **USA (East)** | New York | **{now_ny.strftime('%I:%M %p')}** | EDT/EST (UTC-4/-5) |\n"
+        f"| 🇺🇸 **USA (West)** | Los Angeles | **{now_la.strftime('%I:%M %p')}** | PDT/PST (UTC-7/-8) |\n"
+        f"| 🇯🇵 **Japan** | Tokyo | **{now_tok.strftime('%I:%M %p')}** | JST (UTC+9:00) |\n"
+        f"| 🇦🇺 **Australia** | Sydney | **{now_syd.strftime('%I:%M %p')}** | AEST/AEDT |\n"
+        f"| 🌐 **UTC** | Universal | **{now_utc.strftime('%I:%M %p')}** | UTC+0:00 |"
+    )
+    speech = f"It is currently {now_npt.strftime('%I:%M %p')} in Nepal on {date_npt}."
+    return text, speech
 
 
 # ─── Master System Prompt ─────────────────────────────────────────────────────
@@ -154,6 +320,15 @@ def _build_system_prompt(
     analysis_mode: str,
     market_context: str
 ) -> str:
+    import zoneinfo
+    now_npt = datetime.now(zoneinfo.ZoneInfo("Asia/Kathmandu"))
+    now_utc = datetime.now(zoneinfo.ZoneInfo("UTC"))
+    time_header = (
+        f"[REAL-TIME SYSTEM CLOCK & DATE]:\n"
+        f"• Local Time (Kathmandu, Nepal): {now_npt.strftime('%A, %B %d, %Y, %I:%M:%S %p')} (NPT, UTC+5:45)\n"
+        f"• UTC Time: {now_utc.strftime('%A, %B %d, %Y, %I:%M:%S %p')} UTC\n"
+    )
+
     lang_inst = (
         "Respond in natural Hindi + Nepali mixed conversational language (simple, friendly, and accessible for Nepali traders). Keep technical trading terms in English (Liquidity, BOS, CHOCH, FVG, Order Block, Support, Resistance, Risk/Reward, Stop Loss, Take Profit, Retest, Displacement)."
         if language == "ne"
@@ -169,6 +344,8 @@ def _build_system_prompt(
 
     return f"""You are Shachina — a world-class personal AI assistant and quantitative trading intelligence partner built for {owner_name}.
 
+{time_header}
+
 ## CORE IDENTITY & ANSWERING PRINCIPLES
 You are a highly capable, natural general-purpose AI assistant FIRST (like ChatGPT), and an advanced trading intelligence system SECOND.
 
@@ -179,6 +356,7 @@ You are a highly capable, natural general-purpose AI assistant FIRST (like ChatG
 
 ### 2. DIRECT ANSWER FIRST & ADAPTIVE LENGTH
 - Simple factual questions (e.g. "What is gravity?", "Who was Einstein?", "2+2?"): Answer directly and concisely first in 1–3 clear sentences. Add a simple everyday example only if helpful.
+- Real-time time & date questions: Provide exact accurate timestamps across requested cities or global timezones.
 - Math / Calculations: State the final answer clearly with step-by-step reasoning.
 - Code queries: Provide clean, working, idiomatic code with brief explanation of key logic.
 - Translation queries: Provide the direct, accurate translation without unsolicited commentary.
@@ -187,7 +365,7 @@ You are a highly capable, natural general-purpose AI assistant FIRST (like ChatG
 
 ### 3. CONVERSATION CONTEXT & MULTI-TURN AWARENESS
 - Always remember what was discussed previously in the conversation history.
-- When the user asks a follow-up (e.g. "Explain the second law" after discussing thermodynamics), answer directly about that specific follow-up using previous context without repeating the entire background.
+- When the user asks a follow-up, answer directly about that specific follow-up using previous context without repeating the entire background.
 
 ### 4. LANGUAGE & TONE
 - {lang_inst}
@@ -394,6 +572,11 @@ async def _universal_knowledge_answer(msg: str, owner_name: str) -> Optional[tup
     import urllib.parse
     import html as _html
     ml = msg.lower().strip()
+
+    # 0. Real-time global time & date check
+    time_ans = _resolve_global_time(msg)
+    if time_ans:
+        return time_ans
 
     # 1. Percentage calculation (e.g. "25% of 840")
     pct_m = re.search(r'(\d+(?:\.\d+)?)\s*%\s*(?:of)?\s*(\d+(?:\.\d+)?)', ml)
@@ -666,6 +849,18 @@ async def assistant_chat(
         resp_text = eval_result.beginner_explanation if analysis_mode == "beginner" else eval_result.pro_analysis
         speech_text = _clean_for_tts(resp_text)
 
+    # ── ROUTE T: REAL-TIME GLOBAL CLOCK & TIME RESOLUTION ─────────────────────
+    elif intent == "TIME_QUERY":
+        time_res = _resolve_global_time(msg)
+        if time_res:
+            resp_text, speech_text = time_res
+        else:
+            uni_res = await _universal_knowledge_answer(msg, owner_name)
+            if uni_res:
+                resp_text, speech_text = uni_res
+            else:
+                resp_text, speech_text = _general_ai_offline_response(msg, owner_name, language)
+
     # ── ROUTE C: UNIVERSAL CONVERSATIONAL AI (ANSWERS ALL USER QUESTIONS) ─────
     else:
         sources_list: Optional[List[Dict[str, str]]] = None
@@ -674,10 +869,14 @@ async def assistant_chat(
         # 1. Live Web Search & Deep Research Integration
         search_context = ""
         should_search = req.web_search or req.deep_research or any(
-            k in msg_lower for k in ["search the web", "search web", "latest news", "today news", "bitcoin price", "nepse news", "latest updates"]
+            k in msg_lower for k in [
+                "search the web", "search web", "google", "search google", "search on google",
+                "latest news", "today news", "bitcoin price", "crypto price", "nepse news",
+                "latest updates", "current price", "who won", "live score", "weather in"
+            ]
         )
         if should_search:
-            thinking_status_str = "🔎 Searching the web & analyzing sources..."
+            thinking_status_str = "🔎 Searching Google & verified web sources..."
             search_summary, sources_list = await _search_web_live(msg, max_results=6 if req.deep_research else 4)
             search_context = search_summary
 
