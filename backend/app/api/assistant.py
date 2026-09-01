@@ -122,7 +122,11 @@ def _classify_intent(msg_lower: str) -> str:
         "aaja loss", "profit kati", "loss kati", "how much profit", "how much loss",
         "total profit", "total loss", "mero profit", "mero loss", "aaj kitna",
         "today profit", "today loss", "p&l", "pnl", "profit vayo", "loss vayo",
-        "profit bhayo", "loss bhayo", "net profit", "net loss"
+        "profit bhayo", "loss bhayo", "net profit", "net loss", "kamai kati",
+        "kati kamai", "aaja ko profit", "aaja ko loss", "profit cha", "profit xa",
+        "loss cha", "loss xa", "mero kamai", "profit kitna", "loss kitna",
+        "aaja ko kamai", "kati bachat", "profit report", "loss report",
+        "profit", "loss", "my profit", "my loss"
     ]
     if any(k in msg_lower for k in pnl_keywords):
         return "PNL_QUERY"
@@ -785,7 +789,7 @@ async def _call_gemini(
 
     contents.append({"role": "user", "parts": user_parts})
 
-    candidate_models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+    candidate_models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
     for model_name in candidate_models:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={key}"
         payload = {
@@ -855,8 +859,8 @@ async def _call_openai(
 # ─── Universal Knowledge Engine (Wikipedia + Math — Primary Fallback) ──────────
 async def _universal_knowledge_answer(msg: str, owner_name: str) -> Optional[tuple[str, str]]:
     """
-    Truly general-purpose knowledge engine — handles ANY topic dynamically.
-    No hardcoded topic-specific answers. Uses Wikipedia + DuckDuckGo HTML.
+    Truly general-purpose knowledge engine — handles ANY general encyclopedic topic dynamically.
+    Guarded against returning unrelated articles for trading or financial queries.
     """
     import urllib.parse
     import html as _html
@@ -866,6 +870,15 @@ async def _universal_knowledge_answer(msg: str, owner_name: str) -> Optional[tup
     time_ans = _resolve_global_time(msg)
     if time_ans:
         return time_ans
+
+    # Guard: Never query Wikipedia for trading, PnL, profit, loss, market questions, or short Roman Nepali queries
+    financial_or_trading = any(k in ml for k in [
+        "profit", "loss", "trade", "buy", "sell", "stock", "market", "nepse", "share",
+        "chart", "nabil", "gbime", "pnl", "kamai", "order block", "fvg", "liquidity",
+        "holding", "portfolio", "position", "aaja", "kati", "kasto", "vayo", "bhayo"
+    ])
+    if financial_or_trading:
+        return None
 
     # 1. Percentage calculation (e.g. "25% of 840")
     pct_m = re.search(r'(\d+(?:\.\d+)?)\s*%\s*(?:of)?\s*(\d+(?:\.\d+)?)', ml)
@@ -888,7 +901,7 @@ async def _universal_knowledge_answer(msg: str, owner_name: str) -> Optional[tup
             except Exception:
                 pass
 
-    # 3. Wikipedia dynamic lookup for ANY topic
+    # 3. Wikipedia dynamic lookup for general encyclopedic topics only
     try:
         async with httpx.AsyncClient(timeout=5.0) as wiki_client:
             clean_q = re.sub(
@@ -902,14 +915,21 @@ async def _universal_knowledge_answer(msg: str, owner_name: str) -> Optional[tup
             hits = sr_data.get("query", {}).get("search", [])
             if hits:
                 top_title = hits[0]["title"]
-                sum_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{_up.quote(top_title)}"
-                sum_data = (await wiki_client.get(sum_url, headers={"User-Agent": "ShachinaAI/2.0"})).json()
-                extract = sum_data.get("extract", "")
-                page_url = sum_data.get("content_urls", {}).get("desktop", {}).get("page", "")
-                if extract and len(extract) > 80:
-                    trimmed = extract if len(extract) <= 1200 else extract[:1200].rsplit('.', 1)[0] + '.'
-                    src_note = f"\n\n*(Source: [Wikipedia — {top_title}]({page_url}))*" if page_url else ""
-                    return trimmed + src_note, trimmed[:200]
+                # Relevance check: query token must overlap with title
+                q_toks = set(re.findall(r'[a-zA-Z]{3,}', clean_q.lower()))
+                t_toks = set(re.findall(r'[a-zA-Z]{3,}', top_title.lower()))
+                if q_toks and not (q_toks & t_toks):
+                    # Unrelated Wikipedia page returned by broad fuzzy search
+                    pass
+                else:
+                    sum_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{_up.quote(top_title)}"
+                    sum_data = (await wiki_client.get(sum_url, headers={"User-Agent": "ShachinaAI/2.0"})).json()
+                    extract = sum_data.get("extract", "")
+                    page_url = sum_data.get("content_urls", {}).get("desktop", {}).get("page", "")
+                    if extract and len(extract) > 80:
+                        trimmed = extract if len(extract) <= 1200 else extract[:1200].rsplit('.', 1)[0] + '.'
+                        src_note = f"\n\n*(Source: [Wikipedia — {top_title}]({page_url}))*" if page_url else ""
+                        return trimmed + src_note, trimmed[:200]
     except Exception:
         pass
 
@@ -1296,17 +1316,35 @@ async def assistant_chat(
         ai_res = await _call_gemini(system_prompt, req.history or [], msg, image_data=req.image_data, custom_key=req.api_key)
         if not ai_res:
             ai_res = await _call_openai(system_prompt, req.history or [], msg, image_data=req.image_data, custom_key=req.api_key)
-        if not ai_res:
-            uni_res = await _universal_knowledge_answer(msg_cleaned, owner_name)
-            if uni_res:
-                resp_text, speech_text = uni_res
+
+        if req.is_trading_only:
+            # Dedicated Trading AI: ALWAYS return institutional technical analysis, NEVER Wikipedia
+            if not ai_res:
+                eval_res = TradeSetupGenerator.evaluate_symbol(
+                    symbol=symbol, market=market, candles=candles, timeframe=timeframe,
+                    language=language
+                )
+                resp_text = eval_res.pro_analysis
+                speech_text = _clean_for_tts(resp_text)
+                if eval_res.annotations:
+                    chart_annotations = eval_res.annotations.model_dump()
+                if eval_res.setup:
+                    trade_proposal = eval_res.setup.model_dump()
             else:
-                resp_text, speech_text = _general_ai_offline_response(msg, owner_name, language)
-            if search_context and sources_list and not (uni_res and "Source:" in resp_text):
-                resp_text += f"\n\n**Sources:**\n" + "\n".join([f"- [{s['title']}]({s['url']})" for s in sources_list])
+                resp_text = ai_res
+                speech_text = _clean_for_tts(ai_res)
         else:
-            resp_text = ai_res
-            speech_text = _clean_for_tts(ai_res)
+            if not ai_res:
+                uni_res = await _universal_knowledge_answer(msg_cleaned, owner_name)
+                if uni_res:
+                    resp_text, speech_text = uni_res
+                else:
+                    resp_text, speech_text = _general_ai_offline_response(msg, owner_name, language)
+                if search_context and sources_list and not (uni_res and "Source:" in resp_text):
+                    resp_text += f"\n\n**Sources:**\n" + "\n".join([f"- [{s['title']}]({s['url']})" for s in sources_list])
+            else:
+                resp_text = ai_res
+                speech_text = _clean_for_tts(ai_res)
 
     # ── If trade decision response is short/unavailable, enrich with AI ────────
     if intent == "EXPLICIT_TRADE_DECISION" and (not resp_text or len(resp_text) < 80):
